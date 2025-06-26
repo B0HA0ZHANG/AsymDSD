@@ -1,0 +1,3 @@
+point_encoder:
+  init_args:
+    cls_token: false

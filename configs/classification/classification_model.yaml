@@ -1,0 +1,113 @@
+#   (type: <class 'PointEncoder'>, default: {'class_path': 'asymdsd.models.PointEncoder'}, known subclasses: asymdsd.models.PointEncoder)
+point_encoder:
+  class_path: asymdsd.models.PointEncoder
+  init_args:
+    patchify:
+      # class_path: asymdsd.layers.MultiPointPatchify
+      # init_args:
+      #   num_patches: [64]
+      #   patch_size: [32]
+    cls_token: true
+    patch_embedding:
+      class_path: asymdsd.layers.PatchEmbeddingConfig
+      init_args:
+        position_embedding:
+          class_path: asymdsd.layers.tokenization.PositionEmbeddingConfig
+          init_args:
+            in_features: 3
+            act_layer: torch.nn.GELU
+            normalize: false
+        point_embedding:
+          class_path: asymdsd.layers.tokenization.MemEfficientPointMaxEmbeddingConfig
+          init_args:
+            in_features: 3
+            allow_grad_ckpt: false
+            hidden_dims:
+              - 128
+              - 256
+              - 512
+            act_layer: torch.nn.GELU
+            norm_layer: asymdsd.layers.RMSNorm
+            bias: false
+            process_num_chunks: 1
+        normalize_patches: false
+    encoder:
+      embed_dim: 384
+      num_heads: 6
+      num_layers: 12
+      hidden_ratio: 4.0
+      norm_layer: asymdsd.layers.RMSNorm
+      act_layer: torch.nn.GELU
+      dropout_p: 0.0
+      drop_path_p: 0.2
+      uniform_drop_path: false
+      efficient_drop_path: false
+      add_pos_enc_every_layer: true
+      layer_scale_init:
+      bias: false
+      allow_grad_ckpt: false
+
+#   (type: EncoderBranch | str, default: TEACHER)
+encoder_choice: TEACHER
+
+#   (type: str | None, default: null)
+encoder_ckpt_path:
+
+#   (type: bool | int, default: False)
+freeze_encoder: false
+
+#   (type: bool, default: True)
+map_avg_pooling: true
+
+#   (type: bool, default: False)
+map_max_pooling: true
+
+#   (type: bool, default: False)
+map_cls_token: true
+
+#   (type: bool | int, default: False)
+map_attn_pooling: false
+
+#   (type: ClassificationHeadType, default: LINEAR)
+classification_head_type: MLP
+
+#   (type: MLPConfig | None, default: {'dims': [256, 256], 'dropout_p': 0.5, 'norm_layer': <class 'torch.nn.modules.batchnorm.BatchNorm1d'>, 'bias': False})
+mlp_head_config:
+  dims:
+  - 256
+  - 256
+  norm_layer: torch.nn.BatchNorm1d
+  act_layer: torch.nn.GELU
+  dropout_p: 0.5
+  bias: false
+
+#   (type: int | None, default: null)
+num_classes:
+
+#   (type: Union[FarthestPointSubSamplePC, Identity, null], default: null, known subclasses: asymdsd.components.FarthestPointSubSamplePC, torch.nn.Identity, asymdsd.layers.IdentityMultiArg, asymdsd.layers.IdentityPassThrough)
+subsampling_transform:
+
+#   (type: Union[RandomRotatePC, RandomRotateAxisPC, RandomUniformScalePC, RandomAnisotropicScalePC, RandomTranslatePC, Sequence[RandomRotatePC | RandomRotateAxisPC | RandomUniformScalePC | RandomAnisotropicScalePC | RandomTranslatePC], null], default: {'class_path': 'asymdsd.components.RandomRotateAxisPC'}, known subclasses: asymdsd.components.RandomRotatePC, asymdsd.components.RandomRotateAxisPC, asymdsd.components.RandomUniformScalePC, asymdsd.components.RandomAnisotropicScalePC, asymdsd.components.RandomTranslatePC)
+aug_transform:
+
+#   (type: NormalizePC | NormalizeUnitSpherePC, default: {'class_path': 'asymdsd.components.NormalizeUnitSpherePC'}, known subclasses: asymdsd.components.NormalizePC, asymdsd.components.NormalizeUnitSpherePC)
+norm_transform:
+  class_path: asymdsd.components.NormalizeUnitSpherePC
+
+#   (type: int | None, default: null)
+steps_per_epoch:
+
+#   (type: float, default: 0.1)
+label_smoothing: 0.2
+
+#   (type: float, default: 0.02)
+init_weight_scale: 0.02
+
+#   (type: int | None, default: null)
+voting:
+
+#   (type: Union[RandomRotatePC, RandomRotateAxisPC, RandomUniformScalePC, RandomAnisotropicScalePC, RandomTranslatePC, Sequence[RandomRotatePC | RandomRotateAxisPC | RandomUniformScalePC | RandomAnisotropicScalePC | RandomTranslatePC], null], default: null, known subclasses: asymdsd.components.RandomRotatePC, asymdsd.components.RandomRotateAxisPC, asymdsd.components.RandomUniformScalePC, asymdsd.components.RandomAnisotropicScalePC, asymdsd.components.RandomTranslatePC)
+voting_augmentations:
+
+#   (type: str, default: neural)
+classifier_name: neural

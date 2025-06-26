@@ -1,0 +1,68 @@
+# Turn torch.compile() into a no-op for testing (type: Union[bool, Any], default: False)
+disable: true
+
+#   (type: int, default: 16)
+cache_size_limit: 16
+
+#   (type: bool, default: True)
+suppress_errors: true
+
+
+# Whether it is ok to break model into several subgraphs (type: bool, default: False)
+fullgraph: false
+
+# Use dynamic shape tracing.  When this is True, we will up-front attempt
+# to generate a kernel that is as dynamic as possible to avoid recompilations when
+# sizes change.  This may not always work as some operations/optimizations will
+# force specialization; use TORCH_LOGS=dynamic to debug overspecialization.
+# When this is False, we will NEVER generate dynamic kernels, we will always specialize.
+# By default (None), we automatically detect if dynamism has occurred and compile a more
+# dynamic kernel upon recompile. (type: Optional[bool], default: null)
+dynamic: true
+
+# backend to be used
+# - "inductor" is the default backend, which is a good balance between performance and overhead
+
+# - Non experimental in-tree backends can be seen with `torch._dynamo.list_backends()`
+
+# - Experimental or debug in-tree backends can be seen with `torch._dynamo.list_backends(None)`
+
+# - To register an out-of-tree custom backend: https://pytorch.org/docs/main/compile/custom-backends.html (type: Union[str, Callable], default: inductor)
+backend: inductor
+
+# Can be either "default", "reduce-overhead", "max-autotune" or "max-autotune-no-cudagraphs"
+# - "default" is the default mode, which is a good balance between performance and overhead
+
+# - "reduce-overhead" is a mode that reduces the overhead of python with CUDA graphs,
+#   useful for small batches.  Reduction of overhead can come at the cost of more memory
+#   usage, as we will cache the workspace memory required for the invocation so that we
+#   do not have to reallocate it on subsequent runs.  Reduction of overhead is not guaranteed
+#   to work; today, we only reduce overhead for CUDA only graphs which do not mutate inputs.
+#   There are other circumstances where CUDA graphs are not applicable; use TORCH_LOG=perf_hints
+#   to debug.
+
+# - "max-autotune" is a mode that leverages Triton based matrix multiplications and convolutions
+#   It enables CUDA graphs by default.
+
+# - "max-autotune-no-cudagraphs" is a mode similar to "max-autotune" but without CUDA graphs
+
+# - To see the exact configs that each mode sets you can call `torch._inductor.list_mode_options()` (type: Optional[str], default: null)
+mode:
+
+# A dictionary of options to pass to the backend. Some notable ones to try out are
+# - `epilogue_fusion` which fuses pointwise ops into templates. Requires `max_autotune` to also be set
+
+# - `max_autotune` which will profile to pick the best matmul configuration
+
+# - `fallback_random` which is useful when debugging accuracy issues
+
+# - `shape_padding` which pads matrix shapes to better align loads on GPUs especially for tensor cores
+
+# - `triton.cudagraphs` which will reduce the overhead of python with CUDA graphs
+
+# - `trace.enabled` which is the most useful debugging flag to turn on
+
+# - `trace.graph_diagram` which will show you a picture of your graph after fusion
+
+# - For inductor you can see the full list of configs that it supports by calling `torch._inductor.list_options()` (type: Optional[Dict[str, Union[str, int, bool]]], default: null)
+options:

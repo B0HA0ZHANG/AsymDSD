@@ -1,0 +1,30 @@
+name: asymdsd
+channels:
+  - nvidia
+  - pytorch
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - pytorch==2.3.1
+  - pytorch-cuda==12.1
+  - torchvision
+  - ninja
+  - libgcc-ng < 13.2
+  - jsonargparse==4.28.0
+  - docstring_parser
+  - typeshed-client
+  - lightning==2.2.5
+  - numpy==1.26
+  - scipy
+  - wandb
+  - trimesh
+  - zarr
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - h5py
+  - pip
+  - pip:
+      - fpsample
+      - git+https://github.com/facebookresearch/pytorch3d.git@stable

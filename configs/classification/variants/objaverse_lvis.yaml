@@ -1,0 +1,46 @@
+model:
+  #   (type: str | None, default: null)
+  encoder_ckpt_path: # PROVIDE
+
+  #   (type: bool, default: False)
+  freeze_encoder: true
+
+  #   (type: ClassificationMode, default: LINEAR)
+  classification_head_type: LINEAR
+
+  #   (type: bool, default: True)
+  map_avg_pooling: true
+
+  #   (type: bool, default: False)
+  map_max_pooling: true
+
+  #   (type: bool, default: False)
+  map_cls_token: true
+
+  top_k_metrics: [1, 3, 5]
+
+optim:
+  class_path: asymdsd.components.AdamWSpec
+  init_args:
+    betas:
+      - 0.9
+      - 0.999
+    lr:
+      class_path: asymdsd.components.CosineAnnealingWarmupSchedule
+      init_args:
+        base_value: 5.0e-05
+        final_value: 1.0e-07
+        warmup_epochs: 10
+        startup_value: 0.0
+        max_epochs: -1
+    weight_decay: 0.05
+
+trainer:
+  max_epochs: 150
+  check_val_every_n_epoch: 10
+  enable_checkpointing: false
+  callbacks: null
+
+data:
+  init_args:
+    deterministic_val_data: false

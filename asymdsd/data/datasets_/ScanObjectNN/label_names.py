@@ -1,0 +1,17 @@
+LABEL_NAMES = [
+    "bag",
+    "bin",
+    "box",
+    "cabinet",
+    "chair",
+    "desk",
+    "display",
+    "door",
+    "shelf",
+    "table",
+    "bed",
+    "pillow",
+    "sink",
+    "sofa",
+    "toilet",
+]

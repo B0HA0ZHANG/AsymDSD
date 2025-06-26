@@ -1,0 +1,21 @@
+max_epochs: 150
+
+fast_dev_run: false
+num_sanity_val_steps: 0
+
+# precision: 32-true, bf16-mixed, 16-mixed
+precision: 16-mixed
+accumulate_grad_batches: 1
+
+logger: classification_wandb.yaml
+log_every_n_steps: 50
+profiler:
+enable_checkpointing: null
+
+callbacks:
+  - class_path: asymdsd.callbacks.DefaultTrainerCheckpoint
+    init_args:
+      monitor: "{..}/val/{..}/top1_acc"
+  - class_path: asymdsd.callbacks.DefaultTrainerCheckpoint
+    init_args:
+      monitor: null # At the end of training

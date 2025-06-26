@@ -1,0 +1,32 @@
+#   (type: TraingingMode, default: MASK)
+training_mode: MASK
+
+#   (type: RandomPatchMasking | BlockPatchMasking | InverseBlockPatchMasking, default: {'class_path': 'asymdsd.components.InverseBlockPatchMasking'}, known subclasses: asymdsd.components.RandomPatchMasking, asymdsd.components.BlockPatchMasking, asymdsd.components.InverseBlockPatchMasking, asymdsd.components.InverseBlockPatchMasking)
+mask_generator:
+  # class_path: asymdsd.components.RandomPatchMasking
+  # init_args:
+  #   mask_ratio: 0.7
+  #   multi_mask: 4
+  class_path: asymdsd.components.InverseBlockPatchMasking
+  init_args:
+    mask_ratio: 0.7
+    multi_mask: 8
+    # multi_block: 8
+    block_ratio: 0.1
+    adjust_ratio: 0.1
+  # class_path: asymdsd.components.BlockPatchMasking
+  # init_args:
+  #   mask_ratio: 0.75
+  #   multi_mask: 4
+  #   multi_block: 4
+  #   block_ratio: [0.10, 0.15]
+  #   adjust_ratio: 0.15
+
+#  (type: float | None, default: null)
+regression_loss_weight: 1.0
+
+#   (type: float | None, default: null)
+regression_loss_beta: 2.0
+
+#   (type: bool, default: False)
+gradient_checkpointing: false

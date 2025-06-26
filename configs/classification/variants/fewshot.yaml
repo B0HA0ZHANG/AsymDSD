@@ -1,0 +1,25 @@
+model:
+  #   (type: str | None, default: null)
+  encoder_ckpt_path: # PROVIDE
+
+  #   (type: bool, default: False)
+  freeze_encoder: False
+
+  #   (type: ClassificationMode, default: LINEAR)
+  classification_head_type: MLP
+
+  #   (type: bool, default: True)
+  map_avg_pooling: true
+
+  #   (type: bool, default: False)
+  map_max_pooling: true
+
+  #   (type: bool, default: False)
+  map_cls_token: false
+
+optim: optim/classification_optim_fewshot.yaml
+
+trainer:
+  logger: logger/fewshot_wandb.yaml
+  callbacks: null
+  log_every_n_steps: 1

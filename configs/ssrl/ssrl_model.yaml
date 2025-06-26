@@ -1,0 +1,273 @@
+#   (type: int | None, default: null)
+# Default auto computes.
+steps_per_epoch:
+
+#   (type: TraingingMode, default: MASK)
+training_mode: CLS_MASK
+
+init_weight_scale: 0.02
+
+patch_embedding:
+  class_path: asymdsd.layers.PatchEmbeddingConfig
+  init_args:
+    position_embedding:
+      class_path: asymdsd.layers.tokenization.PositionEmbeddingConfig
+      init_args:
+        in_features: 3
+        act_layer: torch.nn.GELU
+        normalize: false
+    point_embedding:
+      class_path: asymdsd.layers.tokenization.MemEfficientPointMaxEmbeddingConfig
+      init_args:
+        in_features: 3
+        allow_grad_ckpt: false
+        hidden_dims:
+          - 128
+          - 256
+          - 512
+        act_layer: torch.nn.GELU # asymdsd.layers.activation.GEGLU # torch.nn.GELU
+        norm_layer: asymdsd.layers.RMSNorm #asymdsd.layers.RMSNorm # asymdsd.layers.TransposeBatchNorm1d
+        bias: false
+        process_num_chunks: 1
+    normalize_patches: false
+
+#   (type: NormalizePC | NormalizeUnitSpherePC, default: {'class_path': 'asymdsd.components.NormalizeUnitSpherePC'}, known subclasses: asymdsd.components.NormalizePC, asymdsd.components.NormalizeUnitSpherePC)
+norm_transform:
+  class_path: asymdsd.components.NormalizeUnitSpherePC
+
+#   (type: Union[RandomRotatePC, RandomRotateAxisPC, RandomUniformScalePC, RandomTranslatePC, Sequence[RandomRotatePC | RandomRotateAxisPC | RandomUniformScalePC | RandomTranslatePC]], default: {'class_path': 'asymdsd.components.RandomRotateAxisPC'}, known subclasses: asymdsd.components.RandomRotatePC, asymdsd.components.RandomRotateAxisPC, asymdsd.components.RandomUniformScalePC, asymdsd.components.RandomTranslatePC)
+aug_transform:
+# By default are already pre-applied on the CPU.
+
+#   (type: RandomPatchMasking | BlockPatchMasking | InverseBlockPatchMasking, default: {'class_path': 'asymdsd.components.InverseBlockPatchMasking'}, known subclasses: asymdsd.components.RandomPatchMasking, asymdsd.components.BlockPatchMasking, asymdsd.components.InverseBlockPatchMasking, asymdsd.components.InverseBlockPatchMasking)
+mask_generator:
+  # class_path: asymdsd.components.RandomPatchMasking
+  # init_args:
+  #   mask_ratio: 0.7
+  #   multi_mask: 4
+  class_path: asymdsd.components.InverseBlockPatchMasking
+  init_args:
+    mask_ratio: 0.7
+    multi_mask: 4
+    # multi_block: 8
+    block_ratio: 0.1
+    adjust_ratio: 0.1
+  # class_path: asymdsd.components.BlockPatchMasking
+  # init_args:
+  #   mask_ratio: 0.75
+  #   multi_mask: 4
+  #   multi_block: 4
+  #   block_ratio: [0.10, 0.15]
+  #   adjust_ratio: 0.15
+
+# TransformerEncoderConfig(embed_dim: int = 384, num_heads: int = 6, num_layers: int = 12, hidden_ratio: float = 4.0, norm_layer: type[torch.nn.modules.normalization.LayerNorm] | type[torch.nn.modules.batchnorm.BatchNorm1d] | type[torch.nn.modules.batchnorm.BatchNorm2d] | type[torch.nn.modules.linear.Identity] = <class 'torch.nn.modules.normalization.LayerNorm'>, act_layer: type[torch.nn.modules.activation.ReLU] | type[torch.nn.modules.activation.LeakyReLU] | type[torch.nn.modules.activation.GELU] | type[torch.nn.modules.activation.SiLU] | type[torch.nn.modules.activation.Tanh] | type[torch.nn.modules.linear.Identity] | type[asymdsd.layers.activation.GEGLU] | type[asymdsd.layers.activation.SwiGLU] = <class 'torch.nn.modules.activation.GELU'>, dropout_p: float = 0.0, drop_path_p: float = 0.0, uniform_drop_path: bool = False, efficient_drop_path: bool = True, add_pos_enc_every_layer: bool = False, concat_tgt_memory: bool = False, layer_scale_init: float | None = None, bias: bool = True)
+encoder_config:
+  #   (type: int, default: 384)
+  embed_dim: 384
+
+  #   (type: int, default: 6)
+  num_heads: 6
+
+  #   (type: int, default: 12)
+  num_layers: 12
+
+  #   (type: float, default: 4.0)
+  hidden_ratio: 4.0
+
+  #   (type: type[LayerNorm] | type[BatchNorm1d] | type[BatchNorm2d] | type[Identity], default: <class 'torch.nn.modules.normalization.LayerNorm'>)
+  norm_layer: asymdsd.layers.RMSNorm # torch.nn.LayerNorm # asymdsd.layers.RMSNorm
+
+  #   (type: type[ReLU] | type[LeakyReLU] | type[GELU] | type[SiLU] | type[Tanh] | type[Identity] | type[GEGLU] | type[SwiGLU], default: <class 'torch.nn.modules.activation.GELU'>)
+  act_layer: torch.nn.GELU # asymdsd.layers.activation.GEGLU # torch.nn.GELU
+
+  #   (type: float, default: 0.0)
+  dropout_p: 0.0
+
+  #   (type: float, default: 0.0)
+  drop_path_p: 0.0
+
+  #   (type: bool, default: False)
+  uniform_drop_path: false
+
+  #   (type: bool, default: True)
+  efficient_drop_path: false
+
+  #   (type: bool, default: False)
+  add_pos_enc_every_layer: true
+
+  #   (type: float | None, default: null)
+  layer_scale_init:
+
+  #   (type: bool, default: True)
+  bias: false
+
+  #   (type: bool, default: False)
+  allow_grad_ckpt: true
+
+# TransformerEncoderConfig(embed_dim: int = 384, num_heads: int = 6, num_layers: int = 12, hidden_ratio: float = 4.0, norm_layer: type[torch.nn.modules.normalization.LayerNorm] | type[torch.nn.modules.batchnorm.BatchNorm1d] | type[torch.nn.modules.batchnorm.BatchNorm2d] | type[torch.nn.modules.linear.Identity] = <class 'torch.nn.modules.normalization.LayerNorm'>, act_layer: type[torch.nn.modules.activation.ReLU] | type[torch.nn.modules.activation.LeakyReLU] | type[torch.nn.modules.activation.GELU] | type[torch.nn.modules.activation.SiLU] | type[torch.nn.modules.activation.Tanh] | type[torch.nn.modules.linear.Identity] | type[asymdsd.layers.activation.GEGLU] | type[asymdsd.layers.activation.SwiGLU] = <class 'torch.nn.modules.activation.GELU'>, dropout_p: float = 0.0, drop_path_p: float = 0.0, uniform_drop_path: bool = False, efficient_drop_path: bool = True, add_pos_enc_every_layer: bool = False, concat_tgt_memory: bool = False, layer_scale_init: float | None = None, bias: bool = True)
+predictor_config:
+  class_path: asymdsd.layers.TransformerDecoderConfig
+  init_args:
+    #   (type: int, default: 384)
+    embed_dim: 192
+
+    #   (type: int, default: 6)
+    num_heads: 3
+
+    #   (type: int, default: 4)
+    num_layers: 6
+
+    #   (type: float, default: 4.0)
+    hidden_ratio: 4.0
+
+    #   (type: type[LayerNorm] | type[BatchNorm1d] | type[BatchNorm2d] | type[Identity], default: <class 'torch.nn.modules.normalization.LayerNorm'>)
+    norm_layer: asymdsd.layers.RMSNorm # torch.nn.LayerNorm # asymdsd.layers.RMSNorm
+
+    #   (type: type[ReLU] | type[LeakyReLU] | type[GELU] | type[SiLU] | type[Tanh] | type[Identity] | type[GEGLU] | type[SwiGLU], default: <class 'torch.nn.modules.activation.GELU'>)
+    act_layer: torch.nn.GELU # asymdsd.layers.activation.GEGLU # torch.nn.GELU
+
+    #   (type: float, default: 0.0)
+    dropout_p: 0.0
+
+    #   (type: float, default: 0.0)
+    drop_path_p: 0.0
+
+    #   (type: bool, default: False)
+    uniform_drop_path: false
+
+    #   (type: bool, default: True)
+    efficient_drop_path: true
+
+    #   (type: bool, default: False)
+    add_pos_enc_every_layer: true
+
+    #   (type: float | None, default: null)
+    layer_scale_init:
+
+    #   (type: bool, default: True)
+    bias: false
+
+    #   (type: bool, default: False)
+    allow_grad_ckpt: false
+
+    #   (type: bool, default: False)
+    concat_tgt_memory: false
+
+    #   (type: bool, default: False)
+    self_attention: false
+
+projection_head_config:
+  #   (type: int, default: 4096)
+  out_dim: 4096
+
+  #   (type: int, default: 3)
+  num_layers: 3
+
+  #   (type: int, default: 1024)
+  hidden_dim: 1024
+
+  #   (type: int, default: 256)
+  bottleneck_dim: 256
+
+  #   (type: Union[type[LayerNorm], type[RMSNorm], type[BatchNorm1d], type[TransposeBatchNorm1d], type[Identity], null], default: null)
+  norm_layer:
+
+  #   (type: type[ReLU] | type[LeakyReLU] | type[GELU] | type[SiLU] | type[Tanh] | type[Identity] | type[GEGLU] | type[SwiGLU], default: <class 'torch.nn.modules.activation.GELU'>)
+  act_layer: torch.nn.GELU
+
+  #   (type: bool, default: True)
+  bias: true
+
+# Temperature params
+#   (type: Union[float, Callable[[int], float]], default: 0.1)
+cls_teacher_temp:
+  class_path: asymdsd.components.LinearWarmupSchedule
+  init_args:
+    start_value: 0.04
+    final_value: 0.07
+    max_epochs: 10
+
+#   (type: Union[float, Callable[[int], float]], default: 0.1)
+cls_student_temp: 0.1
+
+#   (type: Union[float, Callable[[int], float]], default: 0.1)
+patch_teacher_temp:
+  class_path: asymdsd.components.LinearWarmupSchedule
+  init_args:
+    start_value: 0.05
+    final_value: 0.07
+    max_epochs: 10
+
+#   (type: Union[float, Callable[[int], float]], default: 0.1)
+patch_student_temp: 0.1
+
+#   (type: Union[float, Callable[[int], float]], default: {'class_path': 'asymdsd.components.CosineAnnealingWarmupSchedule', 'init_args': {'base_value': 0.995, 'final_value': 1.0, 'max_steps': 100000}})
+ema_decay:
+  class_path: asymdsd.components.CosineAnnealingWarmupSchedule
+  init_args:
+    base_value: 0.995
+    final_value: 1.0
+    max_epochs: -1
+
+#   (type: Union[float, Callable[[int], float], null], default: null)
+cls_centering_momentum:
+  0.9
+  # class_path: asymdsd.components.CosineAnnealingWarmupSchedule
+  # init_args:
+  #   base_value: 0.9
+  #   final_value: 0.99
+  #   max_epochs: -1
+
+#   (type: Union[float, Callable[[int], float], null], default: null)
+patch_centering_momentum:
+  0.9
+  # class_path: asymdsd.components.CosineAnnealingWarmupSchedule
+  # init_args:
+  #   base_value: 0.9
+  #   final_value: 0.99
+  #   max_epochs: -1
+
+#   (type: float | None, default: null)
+# cls_centering_power_law_tau: 0.25
+
+#   (type: float | None, default: null)
+# patch_centering_power_law_tau: 0.25
+
+#   (type: float | None, default: null)
+# mask_pos_noise: 0.05
+
+#   (type: float | None, default: null)
+# me_max_weight: 1.0
+
+#   (type: float | None, default: null)
+koleo_loss_weight: 0.01
+
+#   (type: float | None, default: null)
+# regression_loss_weight: 1.0
+
+#   (type: float | None, default: null)
+# regression_loss_beta: 2.0
+
+#   (type: float | None, default: null)
+classification_loss_weight:
+
+#   (type: float | None, default: 0.2)
+classification_label_smoothing: 0.2
+
+#   (type: float | None, default: 0.5)
+mask_probability: 1.0
+
+#   (type: ClsPredictor, default: DISABLED)
+cls_predictor: DISABLED
+
+#   (type: bool, default: False)
+add_unmasked_global_cls: true
+
+#   (type: bool, default: False)
+patch_instance_norm: false
+
+#   (type: bool, default: False)
+disable_projection: false
+
+#   (type: bool, default: False)
+gradient_checkpointing: true

@@ -1,0 +1,17 @@
+model:
+  #   (type: str | None, default: null)
+  encoder_ckpt_path: # PROVIDE
+  #   (type: bool, default: False)
+  freeze_encoder: False
+  #   (type: ClassificationMode, default: LINEAR)
+  classification_head_type: MLP
+
+optim: optim/classification_optim_finetune.yaml
+
+trainer:
+  enable_checkpointing: false
+  callbacks: null
+
+data:
+  init_args:
+    deterministic_val_data: false

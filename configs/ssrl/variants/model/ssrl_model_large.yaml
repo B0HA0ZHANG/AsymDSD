@@ -1,0 +1,79 @@
+patch_embedding:
+  class_path: asymdsd.layers.PatchEmbeddingConfig
+  init_args:
+    position_embedding:
+      class_path: asymdsd.layers.tokenization.PositionEmbeddingConfig
+      init_args:
+        in_features: 3
+        act_layer: torch.nn.GELU
+        normalize: false
+    point_embedding:
+      class_path: asymdsd.layers.tokenization.VarMemEfficientPointMaxEmbeddingConfig
+      init_args:
+        in_features: 3
+        allow_grad_ckpt: true
+        hidden_dims: [[256, 512, 1024], [2048]]
+        # hidden_dims: [[128, 256, 512], [1024]]
+        act_layer: torch.nn.GELU # asymdsd.layers.activation.GEGLU # torch.nn.GELU
+        norm_layer: asymdsd.layers.RMSNorm #asymdsd.layers.RMSNorm # asymdsd.layers.TransposeBatchNorm1d
+        bias: false
+        # dropout_p: 0.2
+        process_num_chunks: 4
+    normalize_patches: false
+
+# TransformerEncoderConfig(embed_dim: int = 384, num_heads: int = 6, num_layers: int = 12, hidden_ratio: float = 4.0, norm_layer: type[torch.nn.modules.normalization.LayerNorm] | type[torch.nn.modules.batchnorm.BatchNorm1d] | type[torch.nn.modules.batchnorm.BatchNorm2d] | type[torch.nn.modules.linear.Identity] = <class 'torch.nn.modules.normalization.LayerNorm'>, act_layer: type[torch.nn.modules.activation.ReLU] | type[torch.nn.modules.activation.LeakyReLU] | type[torch.nn.modules.activation.GELU] | type[torch.nn.modules.activation.SiLU] | type[torch.nn.modules.activation.Tanh] | type[torch.nn.modules.linear.Identity] | type[asymdsd.layers.activation.GEGLU] | type[asymdsd.layers.activation.SwiGLU] = <class 'torch.nn.modules.activation.GELU'>, dropout_p: float = 0.0, drop_path_p: float = 0.0, uniform_drop_path: bool = False, efficient_drop_path: bool = True, add_pos_enc_every_layer: bool = False, concat_tgt_memory: bool = False, layer_scale_init: float | None = None, bias: bool = True)
+encoder_config:
+  #   (type: int, default: 384)
+  embed_dim: 1024
+
+  #   (type: int, default: 6)
+  num_heads: 16
+
+  #   (type: int, default: 12)
+  num_layers: 24
+
+  #   (type: float, default: 0.0)
+  drop_path_p: 0.4
+
+  uniform_drop_path: true
+
+  efficient_drop_path: true
+
+  allow_grad_ckpt: true
+
+# TransformerEncoderConfig(embed_dim: int = 384, num_heads: int = 6, num_layers: int = 12, hidden_ratio: float = 4.0, norm_layer: type[torch.nn.modules.normalization.LayerNorm] | type[torch.nn.modules.batchnorm.BatchNorm1d] | type[torch.nn.modules.batchnorm.BatchNorm2d] | type[torch.nn.modules.linear.Identity] = <class 'torch.nn.modules.normalization.LayerNorm'>, act_layer: type[torch.nn.modules.activation.ReLU] | type[torch.nn.modules.activation.LeakyReLU] | type[torch.nn.modules.activation.GELU] | type[torch.nn.modules.activation.SiLU] | type[torch.nn.modules.activation.Tanh] | type[torch.nn.modules.linear.Identity] | type[asymdsd.layers.activation.GEGLU] | type[asymdsd.layers.activation.SwiGLU] = <class 'torch.nn.modules.activation.GELU'>, dropout_p: float = 0.0, drop_path_p: float = 0.0, uniform_drop_path: bool = False, efficient_drop_path: bool = True, add_pos_enc_every_layer: bool = False, concat_tgt_memory: bool = False, layer_scale_init: float | None = None, bias: bool = True)
+predictor_config:
+  class_path: asymdsd.layers.TransformerDecoderConfig
+  init_args:
+    #   (type: int, default: 384)
+    embed_dim: 512
+
+    #   (type: int, default: 6)
+    num_heads: 8
+
+    #   (type: int, default: 4)
+    num_layers: 6
+
+    # allow_grad_ckpt: false
+
+projection_head_config:
+  #   (type: int, default: 4096)
+  out_dim: 4096
+
+  #   (type: int, default: 3)
+  num_layers: 3
+
+  #   (type: int, default: 1024)
+  hidden_dim: 2048
+
+  #   (type: int, default: 256)
+  bottleneck_dim: 256
+
+  #   (type: Union[type[LayerNorm], type[RMSNorm], type[BatchNorm1d], type[TransposeBatchNorm1d], type[Identity], null], default: null)
+  norm_layer:
+
+  #   (type: type[ReLU] | type[LeakyReLU] | type[GELU] | type[SiLU] | type[Tanh] | type[Identity] | type[GEGLU] | type[SwiGLU], default: <class 'torch.nn.modules.activation.GELU'>)
+  act_layer: torch.nn.GELU
+
+  #   (type: bool, default: True)
+  bias: true

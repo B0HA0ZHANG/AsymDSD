@@ -1,0 +1,5 @@
+#   (type: TraingingMode, default: MASK)
+training_mode: CLS
+
+#   (type: bool, default: False)
+gradient_checkpointing: false
