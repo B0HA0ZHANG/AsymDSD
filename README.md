@@ -8,9 +8,7 @@
 
 - 📄 **Paper**: [Asymmetric Dual Self-Distillation for 3D Self-Supervised Representation Learning](https://arxiv.org/abs/2506.21724)
 - 🎓 **Conference**: *NeurIPS 2025* (accepted)
-- 🧑‍🔬 **Authors**: Remco F. Leijenaar, Hamidreza Kasaei
-
----
+- 🧑🏻‍💼 **Authors**: Remco F. Leijenaar, Hamidreza Kasaei
 
 <p align="center">
   <img src="assets/main_overview.png" alt="AsymDSD Visualization", width="800"/>
