@@ -11,7 +11,7 @@ Asymmetric Dual Self-Distillation for 3D Self-Supervised Representation Learning
 
 <p align="center">
   <a href="https://arxiv.org/abs/2506.21724">
-    <img src="https://img.shields.io/badge/PDF-arXiv-b31b1b?logo=arxiv" alt="PDF">
+    <img src="https://img.shields.io/badge/PDF-arXiv-b31b1b?logo=arxiv&style=flat-square" alt="PDF">
   </a>
   <a href="https://neurips.cc/Conferences/2025">
     <img src="https://img.shields.io/badge/NeurIPS-2025-4c1?style=flat-square" alt="Conference">
