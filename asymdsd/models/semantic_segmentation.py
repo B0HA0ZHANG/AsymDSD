@@ -5,7 +5,6 @@ from typing import Any
 import lightning as L
 import torch
 import torchmetrics
-import torchmetrics.segmentation
 from jsonargparse import lazy_instance
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.utilities.types import LRSchedulerTypeUnion

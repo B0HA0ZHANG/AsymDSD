@@ -1,17 +1,20 @@
 --extra-index-url https://download.pytorch.org/whl/cu121
 torch==2.3.1+cu121
-torchvision
+torchvision==0.18.1
 lightning==2.2.5
+torchmetrics
 ninja
 jsonargparse[signatures]==4.28.0
 numpy
 scipy
 wandb
-fpsample
-trimesh
-zarr
-scikit-learn
+fpsample==0.3.3
+trimesh==4.6.10
+zarr==2.18.7
+scikit-learn==1.5.1
 matplotlib
 seaborn 
 h5py
-# pytorch3d @ git+https://github.com/facebookresearch/pytorch3d.git@stable
+setuptools==69.5.1
+wheel
+huggingface_hub

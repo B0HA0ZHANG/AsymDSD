@@ -26,5 +26,5 @@ dependencies:
   - h5py
   - pip
   - pip:
-      - fpsample
+      - fpsample==0.3.3
       - git+https://github.com/facebookresearch/pytorch3d.git@stable

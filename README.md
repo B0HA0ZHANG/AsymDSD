@@ -32,7 +32,7 @@ Asymmetric Dual Self-Distillation for 3D Self-Supervised Representation Learning
 
 <table border="0" cellspacing="20">
 <tr>
-  <td align="center"
+  <td align="center">
     📄 <b>Paper</b><br>
     <a href="https://arxiv.org/abs/2506.21724">arXiv:2506.21724</a>
   </td>
@@ -80,14 +80,16 @@ If you find this repository useful, please cite our paper:
 
 ### 📦 Dependencies
 
-Make sure your system supports the following (some of these will be handled automatically when using the Conda environment, but the system CUDA toolkit is required for building PyTorch3D):
+Ensure your system provides the following:
 
-* **Python** 3.11
-* **CUDA** 12.4
-* **cuDNN** 8.9
-* **GCC** version between 6.x and 13.2 (inclusive)
+* Python 3.11
+* GCC/G++ 6–13.3
+* C++ build tools (`g++`, `make`; e.g. `build-essential` on Ubuntu)
+* Python development headers (`python3-dev`)
+* `git`
+- CUDA compiler (`nvcc`, from a CUDA Toolkit installation or Conda CUDA package)
 
-> ⚠️ The code may work with other versions, but only the above configuration has been tested and verified.
+> ⚠️ Other versions may work, but only the above configuration has been tested.
 
 ### 🐍 Environment Setup
 
@@ -108,39 +110,43 @@ This allows you to make changes to the source code and see updates without reins
 pip install -e .
 ```
 
-### 📁 Alternative: Using `venv` and `pip`
+### 📁 Alternative: Using `uv`
 
-If you prefer not to use Conda, set up the environment using Python's built-in `venv`:
+If you prefer not to use Conda, set up the environment using `uv`:
 
 ```bash
-python -m venv .venv
+uv venv
 source .venv/bin/activate
-pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
-pip install git+https://github.com/facebookresearch/pytorch3d.git@stable --no-build-isolation --use-pep517
-pip install -e .
+uv pip install -r requirements.txt --index-strategy unsafe-best-match
+uv pip install git+https://github.com/facebookresearch/pytorch3d.git@stable --no-build-isolation
+uv pip install -e .
 ```
 
 ### ⚙️ Additional Notes
 
 #### Installing PyTorch3D
 
-PyTorch3D requires the CUDA toolkit to be installed and available on your system, even when using Conda. It is not provided as a prebuilt wheel. If you run into issues during setup with Conda, try:
+PyTorch3D is built from source (it is not provided as a prebuilt wheel).
+If you want CUDA support, you need a CUDA compiler (`nvcc`) available either via a system CUDA Toolkit install or via a Conda-provided `cuda-nvcc`/toolkit package.
+
+If you run into issues during setup, try:
 
 ```bash
-pip install git+https://github.com/facebookresearch/pytorch3d.git@stable --no-build-isolation --use-pep517
+pip install git+https://github.com/facebookresearch/pytorch3d.git@stable --no-build-isolation
 ```
 
 #### Handling Memory Problems During Compilation
 
-If you run out of memory while compiling, remove `ninja`:
+If you run out of memory while compiling PyTorch3D, limit parallel build jobs:
+
+For example, this often suffices:
 
 ```bash
-mamba remove ninja
+export MAX_JOBS=4
+pip install git+https://github.com/facebookresearch/pytorch3d.git@stable --no-build-isolation
 ```
-and try again.
 
-> 🐢 This will slow down the build process but significantly reduce memory usage.
+> 🐢 Lowering `MAX_JOBS` reduces peak memory usage (slower but more stable).
 
 
 ## 2. 📚 Dataset Preparation
@@ -223,10 +229,42 @@ python shell_scripts/py/train_neural_classifier_all.py --model.encoder_ckpt_path
 
 > 🔍 You can find logged results on Weights and Biases. A link to the run is provided in the script output. 
 
-## 4. 🔮 Future Releases on Public Repository
+## 4. 🤗 Pretrained Checkpoints
 
-We plan on releasing the following resources:
+We provide AsymDSD pre-trained model checkpoints on Hugging Face:
 
-* **Pre-trained Models**: Checkpoints for both small and base versions of **AsymDSD**, including **AsymDSD-CLS** and **AsymDSD-MPM**.
-* **Additional Datasets**: Dataset preparation modules including *Mixture* and *Objaverse*.
-* **Training Scripts**: Full training configurations for larger model variants and part segmentation on ShapeNet-Part.
+- Hugging Face repo: https://huggingface.co/remcofl/AsymDSD
+- Suggested local folder: `checkpoints/`
+
+| Checkpoint file (HF) | Size | Pre-training data | Variant | Params (M) |
+| --- | ---: | --- | --- | --- |
+| `AsymDSD-S_ShapeNet.ckpt` | 230 MB | ShapeNetCore | AsymDSD-S | 21.8 |
+| `AsymSD-S-CLS_ShapeNet.ckpt` | 197 MB | ShapeNetCore | AsymSD-S-CLS | 21.8 |
+| `AsymSD-S-MPM_ShapeNet.ckpt` | 208 MB | ShapeNetCore | AsymSD-S-MPM | 21.8 |
+| `AsymDSD-B_Mixture_B.ckpt` | 827 MB | Mixture | AsymDSD-B | 91.8 |
+
+### Download
+
+The environment includes `huggingface_hub`, which provides the `hf` CLI.
+
+Download a single checkpoint into `checkpoints/`:
+
+```bash
+hf download remcofl/AsymDSD <model.ckpt> --local-dir checkpoints/
+```
+
+If you want to download multiple files, repeat the command with a different filename from the table above.
+
+Once downloaded, you can point evaluation/fine-tuning scripts to the checkpoint, e.g.:
+
+```bash
+python shell_scripts/py/train_neural_classifier_all.py --runs <num_eval_runs> --model.encoder_ckpt_path checkpoints/AsymDSD-S_ShapeNet.ckpt
+```
+
+## 5. 🔮 Future Releases
+
+Planned future releases:
+
+- [x] **Pre-trained Models**: Checkpoints for both small and base versions of **AsymDSD**, including **AsymDSD-CLS** and **AsymDSD-MPM**.
+- [ ] **Additional Datasets**: Dataset preparation modules including *Mixture* and *Objaverse*.
+- [ ] **Training Scripts**: Full training configurations for larger model variants and part segmentation on ShapeNet-Part.
