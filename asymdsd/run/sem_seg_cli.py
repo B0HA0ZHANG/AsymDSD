@@ -1,10 +1,10 @@
 from lightning.pytorch.callbacks import LearningRateMonitor
 
-from asymsd.components.utils import set_cuda_float32_matmul_from_env_var
-from asymsd.data import SupervisedPCDataModule
-from asymsd.defaults import DEFAULT_CLASSIFIER_OPTIMIZER
-from asymsd.models import SemanticSegementationModel
-from asymsd.run.cli import TrainerCLI
+from asymdsd.components.utils import set_cuda_float32_matmul_from_env_var
+from asymdsd.data import SupervisedPCDataModule
+from asymdsd.defaults import DEFAULT_CLASSIFIER_OPTIMIZER
+from asymdsd.models import SemanticSegementationModel
+from asymdsd.run.cli import TrainerCLI
 
 set_cuda_float32_matmul_from_env_var()
 

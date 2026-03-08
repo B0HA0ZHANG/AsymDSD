@@ -91,9 +91,23 @@ Ensure your system provides the following:
 
 > ⚠️ Other versions may work, but only the above configuration has been tested.
 
-### 🐍 Environment Setup
+### 📁 Environment Setup
 
-We recommend using **Mamba** via [Miniforge](https://github.com/conda-forge/miniforge) for managing environments.
+### Default: Using `uv`
+
+Set up the environment using `uv`:
+
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt --index-strategy unsafe-best-match
+uv pip install git+https://github.com/facebookresearch/pytorch3d.git@stable --no-build-isolation
+uv pip install -e .
+```
+
+### Alternative: Using Conda/Mamba 🐍
+
+If you prefer Conda, we recommend using **Mamba** via [Miniforge](https://github.com/conda-forge/miniforge):
 
 #### 1. Create and Activate the Environment
 
@@ -104,22 +118,8 @@ conda activate asymdsd
 
 #### 2. Install Module in Editable Mode
 
-This allows you to make changes to the source code and see updates without reinstalling.
-
 ```bash
 pip install -e .
-```
-
-### 📁 Alternative: Using `uv`
-
-If you prefer not to use Conda, set up the environment using `uv`:
-
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install -r requirements.txt --index-strategy unsafe-best-match
-uv pip install git+https://github.com/facebookresearch/pytorch3d.git@stable --no-build-isolation
-uv pip install -e .
 ```
 
 ### ⚙️ Additional Notes
@@ -129,24 +129,14 @@ uv pip install -e .
 PyTorch3D is built from source (it is not provided as a prebuilt wheel).
 If you want CUDA support, you need a CUDA compiler (`nvcc`) available either via a system CUDA Toolkit install or via a Conda-provided `cuda-nvcc`/toolkit package.
 
-If you run into issues during setup, try:
-
-```bash
-pip install git+https://github.com/facebookresearch/pytorch3d.git@stable --no-build-isolation
-```
-
-#### Handling Memory Problems During Compilation
-
-If you run out of memory while compiling PyTorch3D, limit parallel build jobs:
-
-For example, this often suffices:
+If you run into issues during setup, try (exclude `uv` if using Conda/Mamba):
 
 ```bash
 export MAX_JOBS=4
-pip install git+https://github.com/facebookresearch/pytorch3d.git@stable --no-build-isolation
+uv pip install git+https://github.com/facebookresearch/pytorch3d.git@stable --no-build-isolation
 ```
 
-> 🐢 Lowering `MAX_JOBS` reduces peak memory usage (slower but more stable).
+> 🐢 Lowering `MAX_JOBS` reduces peak memory usage (slower but useful for systems with limited memory).
 
 
 ## 2. 📚 Dataset Preparation
@@ -173,14 +163,31 @@ mkdir -p data/ScanObjectNN
 wget -P data/ScanObjectNN <DOWNLOAD_LINK>
 ```
 
+### ShapeNetPart
+
+Download the ShapeNetPart archive into `data/`:
+
+```bash
+cd data
+gdown https://drive.google.com/uc?id=1W3SEE-dY1sxvlECcOwWSDYemwHEUbJIS
+```
+
+This should create:
+
+- `data/shapenetcore_partanno_segmentation_benchmark_v0_normal.tar`
+
 ### ModelNet40 Few-Shot
 1. Download the dataset from [ModelNet40 Few-Shot](https://drive.google.com/drive/folders/1gqvidcQsvdxP_3MdUr424Vkyjb_gt7TW?usp=sharing), by selecting all files and downloading them as a zip file `ModelNetFewshot.zip`.
 2. Place the zip file in the data folder: `data`.
 
+> ℹ️ Training on the *Mixture* dataset requires additional datasets beyond the ones listed in this section. See [Section 5](#5-dataset-preparation-for-mixture) for the extra preparation steps.
+
 
 ## 3. 🏃‍♂️ Running the Code
 
-### Pre-training AsymDSD-S on ShapeNetCore
+### Pre-training
+
+#### AsymDSD-S on ShapeNetCore
 
 To start pretraining the small version of AsymDSD on ShapeNetCore, run:
 
@@ -190,9 +197,9 @@ sh shell_scripts/sh/train_ssrl.sh
 
 > 🧭 You may be prompted to log in to Weights & Biases (wandb).
 
-The first time you run this, it will compile and preprocess the datasets. This process may take a while, but all data is cached under the `data` directory—making subsequent runs much faster.
+The first time you run this, it will compile and preprocess the datasets. This process may take a while, but all data is cached under the `data` directory, making subsequent runs much faster.
 
-### Training with CLS or MPM Modes
+#### Training with CLS or MPM Modes
 
 To train with specific modes, use the corresponding configuration files:
 
@@ -208,9 +215,18 @@ To train with specific modes, use the corresponding configuration files:
   sh shell_scripts/sh/train_ssrl.sh --model configs/ssrl/variants/model/ssrl_model_cls.yaml
   ```
 
+#### AsymDSD-B on Mixture
+
+Train the base-sized model on the Mixture dataset:
+
+```bash
+sh shell_scripts/sh/train_ssrl.sh --model configs/ssrl/variants/model/ssrl_model_base.yaml --data configs/data/Mixture-U.yaml
+```
+
 > 💡 To accelerate pre-training, you can disable evaluation callbacks by editing the trainer config file, or skip all callbacks by passing `--trainer.callbacks null`
 
 ### Evaluation
+#### Object recognition (ScanObjectNN, ModelNet40)
 To evaluate the model on **object recognition tasks**, use the following command:
 
 ```bash
@@ -227,11 +243,23 @@ For **few-shot** evaluation on **ModelNet40**:
 python shell_scripts/py/train_neural_classifier_all.py --model.encoder_ckpt_path <path_to_model>
 ```
 
-### Larger models
-Train 'base'-sized model on the Mixture dataset:
-  ```bash
-  sh shell_scripts/sh/train_ssrl.sh --model configs/ssrl/variants/model/ssrl_model_base.yaml --data configs/data/Mixture-U.yaml
-  ```
+#### Semantic segmentation (ShapeNetPart)
+
+To run semantic segmentation fine-tuning/evaluation, run:
+
+```bash
+sh shell_scripts/sh/train_semseg.sh --model.encoder_ckpt_path <ckpt>
+```
+
+#### LVIS few-shot (Objaverse-v2)
+
+If you prepared Objaverse-v2 with LVIS annotations (see Section 5), you can run LVIS few-shot evaluation with:
+
+```bash
+python shell_scripts/py/Objaverse_fewshot_evals.py --model.encoder_ckpt_path <path_to_model>
+```
+
+> Tip: To evaluate a base-sized encoder, add `--model configs/classification/variants/model/classification_model_base.yaml`.
 
 
 > 🔍 You can find logged results on Weights and Biases. A link to the run is provided in the script output. 
@@ -268,10 +296,160 @@ Once downloaded, you can point evaluation/fine-tuning scripts to the checkpoint,
 python shell_scripts/py/train_neural_classifier_all.py --runs <num_eval_runs> --model.encoder_ckpt_path checkpoints/AsymDSD-S_ShapeNet.ckpt
 ```
 
-## 5. 🔮 Future Releases
+## 5. Dataset Preparation for *Mixture*
+
+The *Mixture* dataset is configured in `configs/data/Mixture-U.yaml`.
+For most sources, the dataset cache is built automatically the first time you run training (if the raw data is present).
+
+If you want to pre-build caches (or if a dataset is not auto-prepared), use the provided CLI wrapper:
+
+```bash
+sh shell_scripts/sh/prepare_data_zarr.sh <dataset_name|config_path>
+```
+
+In addition to the datasets listed in Section 2, Mixture uses the following sources.
+
+### Scanned Objects
+
+1. Download the collection using the script shipped in this repository:
+
+```bash
+mkdir -p data/ScannedObjects
+cd data/ScannedObjects
+python ../../asymdsd/data/datasets_/ScannedObjects/download_collection.py \
+  -o "GoogleResearch" \
+  -c "Scanned Objects by Google Research"
+cd ../..
+```
+
+2. *Optional*: Prepare the dataset cache:
+
+```bash
+sh shell_scripts/sh/prepare_data_zarr.sh ScannedObjects
+```
+
+Config: `configs/data/prepare_data_zarr/ScannedObjects.yaml`
+
+### OmniObject3D
+
+1. Go to:
+   https://openxlab.org.cn/datasets/OpenXDLab/OmniObject3D-New/tree/main/raw/point_clouds/hdf5_files
+2. Create an OpenXLab account and log in if required.
+3. Download the `16384` point cloud files.
+4. Create `data/OmniObject3D.zip` containing the downloaded files (or rename your downloaded archive to `OmniObject3D.zip`).
+5. *Optional*: Prepare the dataset cache (config: `configs/data/prepare_data_zarr/OmniObject3D.yaml`):
+
+```bash
+sh shell_scripts/sh/prepare_data_zarr.sh OmniObject3D
+```
+
+### 3D-FUTURE
+
+1. Go to:
+   https://tianchi.aliyun.com/dataset/98063
+2. Create an account, log in, and click **Apply for dataset** to request access.
+3. Place the model-part archives in `data/3D-Future/`:
+  - `data/3D-Future/3D-FUTURE-model-part1.zip`
+  - `data/3D-Future/3D-FUTURE-model-part2.zip`
+  - `data/3D-Future/3D-FUTURE-model-part3.zip`
+  - `data/3D-Future/3D-FUTURE-model-part4.zip`
+4. *Optional*: Prepare the dataset cache (config: `configs/data/prepare_data_zarr/3D-FUTURE.yaml`):
+
+```bash
+sh shell_scripts/sh/prepare_data_zarr.sh 3D-FUTURE
+```
+
+### Toys4K
+
+1. Go to:
+   https://github.com/rehg-lab/lowshot-shapebias/tree/main/toys4k
+2. In the **Downloading Toys4K** section, click the provided link and fill in the form to request access.
+3. Place the archive at: `data/toys4k_obj_files.zip`
+4. *Optional*: Prepare the dataset cache (config: `configs/data/prepare_data_zarr/Toys4K.yaml`):
+
+```bash
+sh shell_scripts/sh/prepare_data_zarr.sh Toys4K
+```
+
+### S3DIS Objects
+
+1. Request access by filling in this form:
+   https://docs.google.com/forms/d/e/1FAIpQLScDimvNMCGhy_rmBA2gHfDu3naktRm6A8BPwAWWDv-Uhm6Shw/viewform?c=0&w=1
+2. Download `Stanford3dDataset_v1.2.zip` and place it at: `data/Stanford3dDataset_v1.2.zip`
+3. *Optional*: Prepare the dataset cache (config: `configs/data/prepare_data_zarr/S3DIS_objects.yaml`):
+
+```bash
+sh shell_scripts/sh/prepare_data_zarr.sh S3DIS_objects
+```
+
+### SUNRGBD
+
+1. Download the required files into `data/SUNRGBD/`:
+
+```bash
+mkdir -p data/SUNRGBD
+cd data/SUNRGBD
+wget https://rgbd.cs.princeton.edu/data/SUNRGBD.zip
+wget https://rgbd.cs.princeton.edu/data/SUNRGBDtoolbox.zip
+wget https://rgbd.cs.princeton.edu/data/SUNRGBDMeta3DBB_v2.mat
+cd ../..
+```
+
+2. *Optional*: Prepare the dataset cache (config: `configs/data/prepare_data_zarr/SUNRGBD.yaml`):
+
+```bash
+sh shell_scripts/sh/prepare_data_zarr.sh SUNRGBD
+```
+
+### Amazon Berkeley Objects (ABO)
+
+1. Download the required files into `data/ABO/`:
+
+```bash
+mkdir -p data/ABO
+cd data/ABO
+wget https://amazon-berkeley-objects.s3.amazonaws.com/archives/abo-3dmodels.tar
+wget https://amazon-berkeley-objects.s3.amazonaws.com/archives/abo-listings.tar
+cd ../..
+```
+
+2. *Optional*: Prepare the dataset cache (config: `configs/data/prepare_data_zarr/ABO.yaml`):
+
+```bash
+sh shell_scripts/sh/prepare_data_zarr.sh ABO
+```
+
+### Objaverse (mandatory, long-running)
+
+Mixture expects a prepared `data/Objaverse.zarr`. Due to the long runtime, this is **not** prepared automatically as part of pre-training.
+
+You can prepare Objaverse in two ways:
+
+1. **Objaverse-v2 (recommended)**: more reliable and faster.
+
+This option also prepares LVIS-based splits/labels used for LVIS few-shot evaluation.
+
+```bash
+sh shell_scripts/sh/prepare_data_zarr.sh Objaverse_v2
+```
+
+Config: `configs/data/prepare_data_zarr/Objaverse_v2.yaml`
+
+2. **Objaverse-v1**: use this option if you want to stay closer to replicating the Mixture dataset used in the paper.
+
+```bash
+sh shell_scripts/sh/prepare_data_zarr.sh Objaverse
+```
+
+Config: `configs/data/prepare_data_zarr/Objaverse.yaml`
+
+> Tip: Re-running the command resumes and processes remaining objects.
+
+
+## 6. 🔮 Future Releases
 
 Planned future releases:
 
 - [x] **Pre-trained Models**: Checkpoints for both small and base versions of **AsymDSD**, including **AsymDSD-CLS** and **AsymDSD-MPM**.
 - [x] **Additional Datasets**: Dataset preparation modules including *Mixture* and *Objaverse*.
-- [ ] **Training Scripts**: Full training configurations for larger model variants and part segmentation on ShapeNet-Part.
+- [x] **Training Scripts**: Full training configurations for larger model variants and part segmentation on ShapeNet-Part.

@@ -1,10 +1,10 @@
 class_path: asymdsd.SupervisedZarrPCDataModule
 init_args:
-  dataset: ~/Datasets/ShapeNetPart.zarr
+  dataset: data/ShapeNetPart.zarr
   dataset_builder:
     class_path: asymdsd.data.datasets_.ShapeNetPartBuilder
     init_args:
-      data_path: ~/Datasets/shapenetcore_partanno_segmentation_benchmark_v0_normal.tar
+      data_path: data/shapenetcore_partanno_segmentation_benchmark_v0_normal.tar
       num_pre_sample_points: 16384
   num_workers_create_ds: 2
   batch_size: 16 # Consider 16
