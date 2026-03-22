@@ -83,5 +83,5 @@ line-ending = "auto"
 # https://github.com/microsoft/pyright/blob/main/docs/configuration.md
 [tool.pyright]
 typeCheckingMode = "basic"
-ignore = ["sandbox/*", "data/*"]
+ignore = ["sandbox/**", "data/**"]
 pythonVersion = "3.11"
