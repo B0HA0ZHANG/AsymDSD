@@ -1,3 +1,4 @@
+import pickle
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,15 @@ def load_module_from_checkpoint(
             then the loaded checkpoint will have keys ['b', 'c'].
     """
 
-    state_dict: dict[str, Any] = torch.load(ckpt_path, map_location=device)
+    try:
+        state_dict: dict[str, Any] = torch.load(
+            ckpt_path, map_location=device, weights_only=True
+        )
+    except (pickle.UnpicklingError, RuntimeError):
+        # PyTorch 2.6 defaults to weights_only=True, which can fail for older
+        # Lightning checkpoints that store enum/config objects alongside weights.
+        # Fall back to full checkpoint loading for trusted local checkpoints.
+        state_dict = torch.load(ckpt_path, map_location=device, weights_only=False)
 
     if "state_dict" in state_dict:
         state_dict = state_dict["state_dict"]

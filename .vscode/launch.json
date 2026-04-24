@@ -46,6 +46,35 @@
             }
         },
         {
+            "name": "Python: SSRL Debug One Batch",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "asymdsd/run/ssrl_cli.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "fit",
+                "--config",
+                "configs/ssrl/ssrl.yaml",
+                "--trainer.fast_dev_run",
+                "1",
+                "--trainer.logger",
+                "null",
+                "--trainer.precision",
+                "32-true",
+                "--data.init_args.num_workers_train",
+                "0",
+                "--data.init_args.num_workers_val_test",
+                "0"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0",
+                "CUDA_MATMUL_TF32": "high",
+                "LOG_LEVEL": "INFO",
+                "WARNING_LOG_FILE": "train.err"
+            }
+        },
+        {
             "name": "Python: SSRL CLI Tile",
             "type": "debugpy",
             "request": "launch",
