@@ -31,6 +31,7 @@ from ..loss import (
     ClsLoss,
     ClsRegressionLoss,
     KoLeoLoss,
+    LocalRelationDistillLossConfig,
     MeanEntropyLoss,
     # MemEfficientPatchLoss,
     PatchLoss,
@@ -107,6 +108,14 @@ class AsymDSD(L.LightningModule):
         classification_label_smoothing: float | None = 0.2,
         regression_loss_weight: float | None = None,
         regression_loss_beta: float | None = None,
+        relative_3d_bias_scale: FloatMayCall | None = None,
+        relation_distill_loss: LocalRelationDistillLossConfig | None = None,
+        relation_distill_weight: FloatMayCall | None = None,
+        hard_region_weight: FloatMayCall | None = None,
+        hard_region_topk: float = 0.25,
+        hard_region_entropy_weight: float = 1.0,
+        hard_region_margin_weight: float = 1.0,
+        hard_region_max_weight: float = 2.0,
         mask_probability: float | None = 0.5,
         cls_predictor: ClsPredictor = ClsPredictor.DISABLED,
         add_unmasked_global_cls: bool = False,
@@ -268,6 +277,11 @@ class AsymDSD(L.LightningModule):
 
         self.patch_loss = PatchLoss()  # TODO: Update
         self.cls_loss = ClsLoss()
+        self.local_relation_loss = (
+            relation_distill_loss.instantiate()
+            if relation_distill_loss is not None
+            else None
+        )
         self.koleo_loss = KoLeoLoss(input_is_normalized=False)
         self.me_max_loss = MeanEntropyLoss(dim=self.n_prototypes)
         self.me_max_weight = me_max_weight or 0.0
@@ -284,6 +298,10 @@ class AsymDSD(L.LightningModule):
         self.do_regression = self.regression_loss_weight > 0.0
         self.do_koleo = self.koleo_loss_weight > 0.0
         self.do_classification = self.classification_loss_weight > 0.0
+        self.hard_region_topk = max(0.0, min(1.0, hard_region_topk))
+        self.hard_region_entropy_weight = hard_region_entropy_weight
+        self.hard_region_margin_weight = hard_region_margin_weight
+        self.hard_region_max_weight = hard_region_max_weight
 
         if self.do_regression:
             self.patch_regression_loss = (
@@ -314,6 +332,9 @@ class AsymDSD(L.LightningModule):
             "patch_student_temp": patch_student_temp,
             "patch_centering_momentum": patch_centering_momentum,  # Might be None
             "cls_centering_momentum": cls_centering_momentum,  # Might be None
+            "relative_3d_bias_scale": relative_3d_bias_scale or 0.0,
+            "relation_distill_weight": relation_distill_weight or 0.0,
+            "hard_region_weight": hard_region_weight or 0.0,
         }
 
         self.modules_ckpt_path = modules_ckpt_path
@@ -441,6 +462,48 @@ class AsymDSD(L.LightningModule):
 
         return patchify(patch_points)
 
+    def _compute_patch_ambiguity(
+        self,
+        teacher_logits: torch.Tensor,
+        teacher_temp: float,
+    ) -> torch.Tensor:
+        probs = torch.softmax(teacher_logits / teacher_temp, dim=-1).clamp_min(1e-8)
+        log_num_classes = probs.new_tensor(float(probs.size(-1))).log()
+        entropy = -(probs * probs.log()).sum(dim=-1) / log_num_classes
+
+        top2 = probs.topk(k=min(2, probs.size(-1)), dim=-1).values
+        if top2.size(-1) == 1:
+            margin = torch.ones_like(entropy)
+        else:
+            margin = top2[..., 0] - top2[..., 1]
+
+        ambiguity = (
+            self.hard_region_entropy_weight * entropy
+            + self.hard_region_margin_weight * (1.0 - margin)
+        )
+        return ambiguity.detach()
+
+    def _compute_hard_region_weights(self, ambiguity: torch.Tensor) -> torch.Tensor:
+        hard_weight = self.scheduler.value["hard_region_weight"]
+        if hard_weight <= 0.0 or self.hard_region_topk <= 0.0:
+            return torch.ones_like(ambiguity)
+
+        num_patches = ambiguity.size(-1)
+        num_hard = min(num_patches, max(1, round(self.hard_region_topk * num_patches)))
+        hard_indices = ambiguity.topk(k=num_hard, dim=-1).indices
+        hard_mask = torch.zeros_like(ambiguity, dtype=torch.bool)
+        hard_mask.scatter_(dim=-1, index=hard_indices, value=True)
+
+        norm_ambiguity = ambiguity / ambiguity.mean(dim=-1, keepdim=True).clamp_min(
+            1e-6
+        )
+        weights = 1.0 + hard_weight * norm_ambiguity
+        if self.hard_region_max_weight > 0.0:
+            weights = weights.clamp_max(self.hard_region_max_weight)
+
+        weights = torch.where(hard_mask, weights, torch.ones_like(weights))
+        return weights.detach()
+
     @torch.no_grad()
     def forward_teacher(
         self,
@@ -455,6 +518,7 @@ class AsymDSD(L.LightningModule):
         tokens: Tokens = point_encoder.patch_embedding(multi_patches)
         x = tokens.embeddings
         pos_enc = tokens.pos_embeddings
+        token_centers = tokens.centers
 
         out_dict: dict[str, OptionalTensor] = {
             "x_cls_logits": None,
@@ -464,7 +528,12 @@ class AsymDSD(L.LightningModule):
         }
 
         # x is normalized
-        pe_out = point_encoder.transformer_encoder_forward(x, pos_enc)
+        pe_out = point_encoder.transformer_encoder_forward(
+            x,
+            pos_enc,
+            token_centers=token_centers,
+            attn_bias_scale=self.scheduler.value["relative_3d_bias_scale"],
+        )
         x_cls = pe_out.cls_features  # type: ignore
         x_patch = pe_out.patch_features
 
@@ -544,6 +613,7 @@ class AsymDSD(L.LightningModule):
         tokens: Tokens = point_encoder.patch_embedding(multi_patches)
         x = tokens.embeddings
         pos_enc = tokens.pos_embeddings
+        token_centers = tokens.centers
 
         out_dict: dict[str, OptionalTensor] = {
             "x_cls_logits": None,
@@ -558,16 +628,39 @@ class AsymDSD(L.LightningModule):
         }
 
         # ------- Invariance Learning (CLS) -------
-        def forward_cls(x: torch.Tensor, pos_enc: torch.Tensor) -> None:
-            pe_out = point_encoder.transformer_encoder_forward(x, pos_enc)
+        def forward_cls(
+            x: torch.Tensor,
+            pos_enc: torch.Tensor,
+            centers: torch.Tensor | None,
+        ) -> None:
+            pe_out = point_encoder.transformer_encoder_forward(
+                x,
+                pos_enc,
+                token_centers=centers,
+                attn_bias_scale=self.scheduler.value["relative_3d_bias_scale"],
+            )
             x_cls: torch.Tensor = pe_out.cls_features  # type: ignore
             x_patch = pe_out.patch_features
             if self.cls_predictor == ClsPredictor.ALWAYS:
                 x_src = torch.concat((x_cls.unsqueeze(1), x_patch), dim=1)  # type: ignore
-                pos_enc = torch.concat(
+                pos_enc_pred = torch.concat(
                     (torch.zeros_like(x_cls).unsqueeze(1), pos_enc), dim=1
                 )
-                x_cls = self.student.predictor(x_src, pos_enc)[0][:, 0]
+                if centers is not None:
+                    cls_centers = torch.zeros(
+                        centers.shape[0],
+                        1,
+                        centers.shape[-1],
+                        device=centers.device,
+                        dtype=centers.dtype,
+                    )
+                    centers = torch.concat((cls_centers, centers), dim=1)
+                x_cls = self.student.predictor(
+                    x_src,
+                    pos_enc_pred,
+                    token_centers=centers,
+                    attn_bias_scale=self.scheduler.value["relative_3d_bias_scale"],
+                )[0][:, 0]
                 # [0][0] to grab cls token.
 
             if self.do_classification:
@@ -580,7 +673,7 @@ class AsymDSD(L.LightningModule):
 
         if self.mode == TraingingMode.CLS or mask is None:
             # Only when CLS is enabled, and no MPM.
-            forward_cls(x, pos_enc)
+            forward_cls(x, pos_enc, token_centers)
             return out_dict
 
         # Unmasked global crops, if there are any in CLS_MASK mode
@@ -589,20 +682,29 @@ class AsymDSD(L.LightningModule):
         if self.mode.do_cls and indices_unmasked_crops is not None:
             x_unmasked_batch = x[indices_unmasked_crops]
             pos_enc_unmasked_batch = pos_enc[indices_unmasked_crops]
-            forward_cls(x_unmasked_batch, pos_enc_unmasked_batch)
+            centers_unmasked_batch = (
+                token_centers[indices_unmasked_crops]
+                if token_centers is not None
+                else None
+            )
+            forward_cls(x_unmasked_batch, pos_enc_unmasked_batch, centers_unmasked_batch)
 
         # ------- Masked Point Modeling -------
         x_mpm = x[indices_masked_crops]  # (B, P, F)
         pos_enc_mpm = pos_enc[indices_masked_crops]  # (B, P, F)
+        centers_mpm = token_centers[indices_masked_crops] if token_centers is not None else None
 
         x_mpm = self._multi_mask_repeat(x_mpm)  # (B*multi_mask, P, F)
         pos_enc_mpm = self._multi_mask_repeat(pos_enc_mpm)  # (B*multi_mask, P, F)
+        if centers_mpm is not None:
+            centers_mpm = self._multi_mask_repeat(centers_mpm)
 
         # --- Visible context ---
         inv_mask = ~mask
         # (B*multi_mask, num_vis, F)
         x_visible = gather_masked(x_mpm, inv_mask)
         pos_enc_visible = gather_masked(pos_enc_mpm, inv_mask)
+        centers_visible = gather_masked(centers_mpm, inv_mask) if centers_mpm is not None else None
 
         # --- Target positions queries ---
         multi_block = block_idx is not None  # == self.multi_block
@@ -618,10 +720,18 @@ class AsymDSD(L.LightningModule):
             )
             # (B*multi_mask*n_blocks, num_masks, F)
             pos_enc_masked = pos_enc_mpm[batch_indices, block_idx].flatten(0, 1)
+            centers_masked = (
+                centers_mpm[batch_indices, block_idx].flatten(0, 1)
+                if centers_mpm is not None
+                else None
+            )
 
         else:
             # (B*multi_mask, num_masks, F)
             pos_enc_masked = gather_masked(pos_enc_mpm, mask)
+            centers_masked = (
+                gather_masked(centers_mpm, mask) if centers_mpm is not None else None
+            )
 
         # Optional noisy queries (normal noise to pos_enc_masked)
         if self.masked_pos_noise is not None:
@@ -635,7 +745,10 @@ class AsymDSD(L.LightningModule):
         if self.do_predict:
             # --- Encoder ---
             pe_out = point_encoder.transformer_encoder_forward(
-                x_visible, pos_enc_visible
+                x_visible,
+                pos_enc_visible,
+                token_centers=centers_visible,
+                attn_bias_scale=self.scheduler.value["relative_3d_bias_scale"],
             )
 
             # --- Encoded visible context ---
@@ -643,8 +756,20 @@ class AsymDSD(L.LightningModule):
                 x_cls = pe_out.cls_features
                 x_patch = pe_out.patch_features
                 x_context = torch.concat((x_cls.unsqueeze(1), x_patch), dim=1)  # type: ignore
+                if centers_visible is not None:
+                    cls_centers = torch.zeros(
+                        centers_visible.shape[0],
+                        1,
+                        centers_visible.shape[-1],
+                        device=centers_visible.device,
+                        dtype=centers_visible.dtype,
+                    )
+                    context_centers = torch.concat((cls_centers, centers_visible), dim=1)
+                else:
+                    context_centers = None
             else:
                 x_context = pe_out.patch_features
+                context_centers = centers_visible
 
             # --- Compute prediction ---
             if self.decoder_style_predictor:
@@ -652,6 +777,10 @@ class AsymDSD(L.LightningModule):
                 if multi_block:
                     x_context = x_context.repeat_interleave(num_blocks, dim=0)
                     mask_tokens = mask_tokens.repeat_interleave(num_blocks, dim=0)
+                    if context_centers is not None:
+                        context_centers = context_centers.repeat_interleave(
+                            num_blocks, dim=0
+                        )
 
                 if self.concat_tgt_memory and not multi_block:
                     # When concatentating target and memory,
@@ -668,6 +797,9 @@ class AsymDSD(L.LightningModule):
                     mask_tokens,
                     pos_enc_masked,
                     memory=x_context,
+                    token_centers=centers_masked,
+                    memory_centers=context_centers,
+                    attn_bias_scale=self.scheduler.value["relative_3d_bias_scale"],
                     memory_mask=memory_mask,
                 )[0]
                 if self.do_classification:
@@ -681,9 +813,18 @@ class AsymDSD(L.LightningModule):
                     pos_enc_visible = pos_enc_visible.repeat_interleave(
                         num_blocks, dim=0
                     )
+                    if centers_visible is not None:
+                        centers_visible = centers_visible.repeat_interleave(
+                            num_blocks, dim=0
+                        )
 
                 # Concatenate positional encodings
                 pos_enc_tuple = (pos_enc_visible, pos_enc_masked)
+                centers_tuple = (
+                    (centers_visible, centers_masked)
+                    if centers_visible is not None and centers_masked is not None
+                    else None
+                )
                 if self.mode.do_cls:
                     x_cls_expanded = x_cls.unsqueeze(1)  # type: ignore
                     if multi_block:
@@ -691,9 +832,28 @@ class AsymDSD(L.LightningModule):
                             num_blocks, dim=0
                         )
                     pos_enc_tuple = (x_cls_expanded,) + pos_enc_tuple
+                    if centers_tuple is not None:
+                        cls_centers = torch.zeros(
+                            centers_visible.shape[0],  # type: ignore[union-attr]
+                            1,
+                            centers_visible.shape[-1],  # type: ignore[union-attr]
+                            device=centers_visible.device,  # type: ignore[union-attr]
+                            dtype=centers_visible.dtype,  # type: ignore[union-attr]
+                        )
+                        centers_tuple = (cls_centers,) + centers_tuple
                 pos_enc_full = torch.concat(pos_enc_tuple, dim=1)
+                centers_full = (
+                    torch.concat(centers_tuple, dim=1)
+                    if centers_tuple is not None
+                    else None
+                )
 
-                x_pred = self.student.predictor(x_pred, pos_enc_full)[0]
+                x_pred = self.student.predictor(
+                    x_pred,
+                    pos_enc_full,
+                    token_centers=centers_full,
+                    attn_bias_scale=self.scheduler.value["relative_3d_bias_scale"],
+                )[0]
                 # (B*multi_mask, num_masks, F)
                 x_patch = x_pred[:, -num_masks:]
 
@@ -701,7 +861,17 @@ class AsymDSD(L.LightningModule):
             # --- Encoder ---
             x_input = torch.concat((x_visible, mask_tokens), dim=1)
             pos_enc_input = torch.concat((pos_enc_visible, pos_enc_masked), dim=1)
-            pe_out = point_encoder.transformer_encoder_forward(x_input, pos_enc_input)
+            centers_input = (
+                torch.concat((centers_visible, centers_masked), dim=1)
+                if centers_visible is not None and centers_masked is not None
+                else None
+            )
+            pe_out = point_encoder.transformer_encoder_forward(
+                x_input,
+                pos_enc_input,
+                token_centers=centers_input,
+                attn_bias_scale=self.scheduler.value["relative_3d_bias_scale"],
+            )
 
             x_cls = pe_out.cls_features
             x_patch = pe_out.patch_features[:, -num_masks:]
@@ -817,7 +987,8 @@ class AsymDSD(L.LightningModule):
             indices_masked_crops=indices_masked_crops,
             mask=mask,
             block_idx=block_idx,
-            return_embeddings=self.do_regression,
+            return_embeddings=self.do_regression
+            or self.local_relation_loss is not None,
         )
 
         preds = self.forward_student(
@@ -833,22 +1004,86 @@ class AsymDSD(L.LightningModule):
 
         loss = 0.0
         cls_loss = patch_loss = koleo_loss = classification_loss = me_max = None
+        relation_loss = 0.0 if self.local_relation_loss is not None else None
         total_terms = 0
         cls_terms = regression_terms = classification_terms = 0
         regression_loss = 0.0 if self.do_regression else None
 
         if self.mode.do_mask:
+            patch_weights = None
             if not self.disable_projection:
-                patch_loss = checkpoint(
-                    self.patch_loss,
-                    # (B*multi_mask*num_masks, n_prototypes)
-                    preds["x_patch_logits"],
-                    targets["x_patch_logits"],
-                    self.scheduler.value["patch_teacher_temp"],
-                    self.scheduler.value["patch_student_temp"],
-                )
+                if block_idx is None:
+                    num_masked_tokens = targets["x_patch_logits"].shape[0] // mask.shape[0]  # type: ignore[union-attr]
+                    patch_loss_vec = self.patch_loss(
+                        preds["x_patch_logits"],  # type: ignore[arg-type]
+                        targets["x_patch_logits"],  # type: ignore[arg-type]
+                        self.scheduler.value["patch_teacher_temp"],
+                        self.scheduler.value["patch_student_temp"],
+                        reduction="none",
+                    )
+                    patch_loss_vec = patch_loss_vec.unflatten(
+                        0, (mask.shape[0], num_masked_tokens)  # type: ignore[arg-type]
+                    )
+
+                    teacher_patch_logits = targets["x_patch_logits"].unflatten(  # type: ignore[union-attr]
+                        0,
+                        (mask.shape[0], num_masked_tokens),  # type: ignore[arg-type]
+                    )
+                    ambiguity = self._compute_patch_ambiguity(
+                        teacher_patch_logits,
+                        self.scheduler.value["patch_teacher_temp"],
+                    )
+                    patch_weights = self._compute_hard_region_weights(ambiguity)
+                    patch_loss = (patch_loss_vec * patch_weights).sum() / patch_weights.sum().clamp_min(1e-6)
+                else:
+                    patch_loss = checkpoint(
+                        self.patch_loss,
+                        preds["x_patch_logits"],
+                        targets["x_patch_logits"],
+                        self.scheduler.value["patch_teacher_temp"],
+                        self.scheduler.value["patch_student_temp"],
+                    )
                 loss = loss + patch_loss  # type: ignore
                 total_terms += 1
+
+            if (
+                self.local_relation_loss is not None
+                and block_idx is None
+                and self.scheduler.value["relation_distill_weight"] > 0.0
+            ):
+                masked_centers = gather_masked(
+                    self._multi_mask_repeat(global_centers[indices_masked_crops]),
+                    mask,
+                )
+                num_masked_tokens = masked_centers.shape[1]
+                student_patch_emb = preds["x_patch_embedding"].unflatten(  # type: ignore[union-attr]
+                    0,
+                    (mask.shape[0], num_masked_tokens),  # type: ignore[arg-type]
+                )
+                teacher_patch_emb = targets["x_patch_embedding"].unflatten(  # type: ignore[union-attr]
+                    0,
+                    (mask.shape[0], num_masked_tokens),  # type: ignore[arg-type]
+                )
+
+                if patch_weights is None:
+                    patch_weights = torch.ones(
+                        (mask.shape[0], num_masked_tokens),
+                        device=masked_centers.device,
+                        dtype=student_patch_emb.dtype,
+                    )
+
+                relation_loss_vec = self.local_relation_loss(
+                    student_patch_emb,
+                    teacher_patch_emb,
+                    masked_centers,
+                    reduction="none",
+                )
+                relation_loss = (
+                    relation_loss_vec * patch_weights
+                ).sum() / patch_weights.sum().clamp_min(1e-6)
+                relation_weight = self.scheduler.value["relation_distill_weight"]
+                loss = loss + relation_weight * relation_loss
+                total_terms += relation_weight
 
             if self.do_regression:
                 regression_loss = self.patch_regression_loss(
@@ -1129,6 +1364,7 @@ class AsymDSD(L.LightningModule):
             "cls_preds": cls_preds,
             "cls_targets": cls_targets,
             "patch_loss": patch_loss,
+            "relation_loss": relation_loss,
             "patch_preds": preds["x_patch_logits"],
             "patch_targets": targets["x_patch_logits"],
             "me_max": me_max,
@@ -1161,6 +1397,8 @@ class AsymDSD(L.LightningModule):
             "train/loss": True,
             "train/cls_loss": self.mode.do_cls,
             "train/patch_loss": self.mode.do_mask and not self.disable_projection,
+            "train/relation_loss": self.local_relation_loss is not None
+            and self.mode.do_mask,
             "train/me_max": self.me_max_weight > 0.0,
             "train/koleo_loss": self.do_koleo,
             "train/regression_loss": self.do_regression,
@@ -1168,10 +1406,11 @@ class AsymDSD(L.LightningModule):
         }
 
         for log_key, condition in log_conditions.items():
-            if condition:
+            value = outputs[log_key.split("/")[-1]]
+            if condition and value is not None:
                 self.log(
                     log_key,
-                    outputs[log_key.split("/")[-1]],
+                    value,
                     on_step=True,
                     on_epoch=log_key == "train/loss",
                     prog_bar=log_key

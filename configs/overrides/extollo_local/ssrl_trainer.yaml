@@ -12,7 +12,7 @@ deterministic: true
 gradient_clip_val: 10.0
 
 log_every_n_steps: 50
-logger: ssrl_wandb.yaml
+logger: ../extollo/ssrl_wandb.yaml
 
 profiler:
   # Some examples:
@@ -52,11 +52,11 @@ callbacks:
       datamodule:
         class_path: asymdsd.SupervisedZarrPCDataModule
         init_args:
-          dataset: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/asymdsd_data/ModelNet40.zarr
+          dataset: /local_disk0/data/ModelNet40.zarr
           dataset_builder:
             class_path: asymdsd.data.datasets_.ModelNet40Builder
             init_args:
-              data_path: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/asymdsd_data/ModelNet40.zip
+              data_path: /local_disk0/data/ModelNet40.zip
               num_pre_sample_points: 16384
           num_workers_create_ds: 24
           batch_size: 32
@@ -88,11 +88,11 @@ callbacks:
       datamodule:
         class_path: asymdsd.SupervisedZarrPCDataModule
         init_args:
-          dataset: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/asymdsd_data/ScanObjectNN.zarr
+          dataset: /local_disk0/data/ScanObjectNN.zarr
           dataset_builder:
             class_path: asymdsd.data.datasets_.ScanObjectNNBuilder
             init_args:
-              data_path: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/asymdsd_data/ScanObjectNN/h5_files.zip
+              data_path: /local_disk0/data/ScanObjectNN/h5_files.zip
           num_workers_create_ds: 8
           split_map:
             train:
@@ -119,11 +119,11 @@ callbacks:
       datamodule:
         class_path: asymdsd.SupervisedZarrPCDataModule
         init_args:
-          dataset: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/asymdsd_data/ModelNet40.zarr
+          dataset: /local_disk0/data/ModelNet40.zarr
           dataset_builder:
             class_path: asymdsd.data.datasets_.ModelNet40Builder
             init_args:
-              data_path: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/asymdsd_data/ModelNet40.zip
+              data_path: /local_disk0/data/ModelNet40.zip
               num_pre_sample_points: 16384
           num_workers_create_ds: 24
           batch_size: 32
@@ -173,11 +173,11 @@ callbacks:
       datamodule:
         class_path: asymdsd.SupervisedZarrPCDataModule
         init_args:
-          dataset: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/asymdsd_data/ScanObjectNN.zarr
+          dataset: /local_disk0/data/ScanObjectNN.zarr
           dataset_builder:
             class_path: asymdsd.data.datasets_.ScanObjectNNBuilder
             init_args:
-              data_path: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/asymdsd_data/ScanObjectNN/h5_files.zip
+              data_path: /local_disk0/data/ScanObjectNN/h5_files.zip
           num_workers_create_ds: 8
           split_map:
             train:
@@ -236,11 +236,11 @@ callbacks:
       datamodule:
         class_path: asymdsd.SupervisedZarrPCDataModule
         init_args:
-          dataset: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/asymdsd_data/ModelNet40.zarr
+          dataset: /local_disk0/data/ModelNet40.zarr
           dataset_builder:
             class_path: asymdsd.data.datasets_.ModelNet40Builder
             init_args:
-              data_path: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/asymdsd_data/ModelNet40.zip
+              data_path: /local_disk0/data/ModelNet40.zip
               num_pre_sample_points: 16384
           num_workers_create_ds: 24
           batch_size: 32
@@ -308,11 +308,11 @@ callbacks:
       datamodule:
         class_path: asymdsd.SupervisedZarrPCDataModule
         init_args:
-          dataset: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/asymdsd_data/ScanObjectNN.zarr
+          dataset: /local_disk0/data/ScanObjectNN.zarr
           dataset_builder:
             class_path: asymdsd.data.datasets_.ScanObjectNNBuilder
             init_args:
-              data_path: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/asymdsd_data/ScanObjectNN/h5_files.zip
+              data_path: /local_disk0/data/ScanObjectNN/h5_files.zip
           num_workers_create_ds: 8
           split_map:
             train:
@@ -337,7 +337,7 @@ callbacks:
           num_workers_train: 8
           num_workers_val_test: 8
           pin_memory: true
-      #eval_run_interval: [99, 149, 199, 249, 279, 289, 299]
+      # eval_run_interval: [99, 149, 199, 249, 279, 289, 299]
       eval_run_interval: [249, 299]
       encoder_choice: teacher
       max_epochs: 150

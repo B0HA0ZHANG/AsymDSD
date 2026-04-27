@@ -13,6 +13,7 @@ from .drop_path import DropPath, drop_path_efficient
 from .layer_scale import LayerScale
 from .multilayer_perceptron import MLP
 from .normalization import NormalizationLayer
+from .relative_3d_bias import Relative3DBiasConfig
 
 
 @dataclass
@@ -31,6 +32,7 @@ class TransformerBaseConfig(FactoryConfig, ABC):
     layer_scale_init: float | None = None
     bias: bool = True
     allow_grad_ckpt: bool = False
+    relative_3d_bias: Relative3DBiasConfig | None = None
 
 
 @dataclass
@@ -129,6 +131,11 @@ class Attention(nn.Module):
             batch_first=True,
         )
         self.concat_tgt_memory = config.concat_tgt_memory
+        self.relative_3d_bias = (
+            config.relative_3d_bias.instantiate()
+            if config.relative_3d_bias is not None
+            else None
+        )
 
         init_val = config.layer_scale_init
         self.layer_scale = (
@@ -140,6 +147,9 @@ class Attention(nn.Module):
         self,
         x: torch.Tensor,
         memory: torch.Tensor | None = None,
+        q_centers: torch.Tensor | None = None,
+        memory_centers: torch.Tensor | None = None,
+        attn_bias_scale: float = 1.0,
         *,
         attn_mask: torch.Tensor | None = None,
         key_padding_mask: torch.Tensor | None = None,
@@ -149,25 +159,64 @@ class Attention(nn.Module):
 
         if memory is None:
             q = k = v = x
+            k_centers = q_centers
         else:
             q = x
             if self.concat_tgt_memory:
                 k = v = torch.concat((memory, x), dim=1)
+                if memory_centers is not None and q_centers is not None:
+                    k_centers = torch.concat((memory_centers, q_centers), dim=1)
+                else:
+                    k_centers = None
             else:
                 k = v = memory
+                k_centers = memory_centers
+
+        merged_attn_mask = attn_mask
+        if (
+            self.relative_3d_bias is not None
+            and q_centers is not None
+            and k_centers is not None
+            and attn_bias_scale > 0.0
+        ):
+            rel_bias = self.relative_3d_bias(q_centers, k_centers)
+            rel_bias = (rel_bias * attn_bias_scale).flatten(0, 1)
+            merged_attn_mask = self._merge_attention_mask(attn_mask, rel_bias)
 
         x, attn_weights = self.attn(
             q,
             k,
             v,
             key_padding_mask=key_padding_mask,
-            attn_mask=attn_mask,
+            attn_mask=merged_attn_mask,
             need_weights=return_attention,
             average_attn_weights=False,
         )
         x = self.layer_scale(x)
         x = self.dropout(x)
         return (x, attn_weights) if return_attention else (x, None)
+
+    def _merge_attention_mask(
+        self,
+        attn_mask: torch.Tensor | None,
+        rel_bias: torch.Tensor,
+    ) -> torch.Tensor:
+        if attn_mask is None:
+            return rel_bias
+
+        if attn_mask.dtype == torch.bool:
+            additive_mask = torch.zeros_like(rel_bias)
+            mask_fill_value = torch.finfo(rel_bias.dtype).min
+            if attn_mask.dim() == 2:
+                additive_mask.masked_fill_(attn_mask.unsqueeze(0), mask_fill_value)
+            else:
+                additive_mask.masked_fill_(attn_mask, mask_fill_value)
+            return rel_bias + additive_mask
+
+        if attn_mask.dim() == 2:
+            return rel_bias + attn_mask.to(rel_bias.dtype).unsqueeze(0)
+
+        return rel_bias + attn_mask.to(rel_bias.dtype)
 
 
 class Block(nn.Module):
@@ -186,6 +235,9 @@ class Block(nn.Module):
         self,
         x: torch.Tensor,
         memory: torch.Tensor | None = None,
+        token_centers: torch.Tensor | None = None,
+        memory_centers: torch.Tensor | None = None,
+        attn_bias_scale: float = 1.0,
         *,
         self_mask: torch.Tensor | None = None,
         memory_mask: torch.Tensor | None = None,
@@ -199,6 +251,8 @@ class Block(nn.Module):
             if self.self_attn:
                 self_attn_out = self.self_attn(
                     x,
+                    q_centers=token_centers,
+                    attn_bias_scale=attn_bias_scale,
                     attn_mask=self_mask,
                     key_padding_mask=self_key_padding_mask,
                     return_attention=return_attention,
@@ -210,6 +264,9 @@ class Block(nn.Module):
                 cross_attn_out = self.cross_attn(
                     x,
                     memory,
+                    q_centers=token_centers,
+                    memory_centers=memory_centers,
+                    attn_bias_scale=attn_bias_scale,
                     attn_mask=memory_mask,
                     key_padding_mask=memory_key_padding_mask,
                     return_attention=return_attention,
@@ -225,6 +282,8 @@ class Block(nn.Module):
             if self.self_attn:
                 self_attn_out = self.self_attn(
                     x,
+                    q_centers=token_centers,
+                    attn_bias_scale=attn_bias_scale,
                     attn_mask=self_mask,
                     key_padding_mask=self_key_padding_mask,
                     return_attention=return_attention,
@@ -236,6 +295,9 @@ class Block(nn.Module):
                 cross_attn_out = self.cross_attn(
                     x,
                     memory,
+                    q_centers=token_centers,
+                    memory_centers=memory_centers,
+                    attn_bias_scale=attn_bias_scale,
                     attn_mask=memory_mask,
                     key_padding_mask=memory_key_padding_mask,
                     return_attention=return_attention,
@@ -253,6 +315,8 @@ class Block(nn.Module):
                     drop_p=self.drop_path_p,
                     training=self.training,
                     residual_add=True,
+                    q_centers=token_centers,
+                    attn_bias_scale=attn_bias_scale,
                     attn_mask=self_mask,
                     key_padding_mask=self_key_padding_mask,
                 )
@@ -264,6 +328,9 @@ class Block(nn.Module):
                     drop_p=self.drop_path_p,
                     training=self.training,
                     residual_add=True,
+                    q_centers=token_centers,
+                    memory_centers=memory_centers,
+                    attn_bias_scale=attn_bias_scale,
                     attn_mask=memory_mask,
                     key_padding_mask=memory_key_padding_mask,
                 )
@@ -307,6 +374,9 @@ class TransformerModule(nn.Module):
         x: torch.Tensor,
         pos_enc: torch.Tensor,
         memory: torch.Tensor | None = None,
+        token_centers: torch.Tensor | None = None,
+        memory_centers: torch.Tensor | None = None,
+        attn_bias_scale: float = 1.0,
         *,
         self_mask: torch.Tensor | None = None,
         memory_mask: torch.Tensor | None = None,
@@ -331,6 +401,9 @@ class TransformerModule(nn.Module):
                     block,
                     x,
                     memory,
+                    token_centers=token_centers,
+                    memory_centers=memory_centers,
+                    attn_bias_scale=attn_bias_scale,
                     self_mask=self_mask,
                     memory_mask=memory_mask,
                     self_key_padding_mask=self_key_padding_mask,
@@ -342,6 +415,9 @@ class TransformerModule(nn.Module):
                 block_out = block(
                     x,
                     memory,
+                    token_centers=token_centers,
+                    memory_centers=memory_centers,
+                    attn_bias_scale=attn_bias_scale,
                     self_mask=self_mask,
                     memory_mask=memory_mask,
                     self_key_padding_mask=self_key_padding_mask,
@@ -371,7 +447,7 @@ class TransformerEncoder(TransformerModule):
     def __init__(self, config: TransformerEncoderConfig) -> None:
         self.original_config = config
         cfg = TransformerModConfig(
-            **(asdict(config)), self_attention=True, cross_attention=False
+            **dict(vars(config)), self_attention=True, cross_attention=False
         )
         super().__init__(cfg)
 
@@ -379,6 +455,8 @@ class TransformerEncoder(TransformerModule):
         self,
         x: torch.Tensor,
         pos_enc: torch.Tensor,
+        token_centers: torch.Tensor | None = None,
+        attn_bias_scale: float = 1.0,
         *,
         self_mask: torch.Tensor | None = None,
         self_key_padding_mask: torch.Tensor | None = None,
@@ -388,6 +466,8 @@ class TransformerEncoder(TransformerModule):
         return super().forward(
             x,
             pos_enc,
+            token_centers=token_centers,
+            attn_bias_scale=attn_bias_scale,
             self_mask=self_mask,
             self_key_padding_mask=self_key_padding_mask,
             return_attention=return_attention,
@@ -398,5 +478,5 @@ class TransformerEncoder(TransformerModule):
 class TransformerDecoder(TransformerModule):
     def __init__(self, config: TransformerDecoderConfig) -> None:
         self.original_config = config
-        cfg = TransformerModConfig(**asdict(config), cross_attention=True)
+        cfg = TransformerModConfig(**dict(vars(config)), cross_attention=True)
         super().__init__(cfg)

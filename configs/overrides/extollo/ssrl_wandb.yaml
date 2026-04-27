@@ -1,7 +1,7 @@
 class_path: asymdsd.loggers.WandbLogger
 init_args:
   project: AsymDSD
-  save_dir: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/log
+  save_dir: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/log_2/
   anonymous: true
   log_model: false
   offline: false

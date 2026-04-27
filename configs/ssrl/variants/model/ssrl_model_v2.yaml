@@ -1,0 +1,87 @@
+encoder_config:
+  relative_3d_bias:
+    class_path: asymdsd.layers.Relative3DBiasConfig
+    init_args:
+      num_heads: 6
+      hidden_dim: 64
+      use_distance: true
+
+predictor_config:
+  init_args:
+    relative_3d_bias:
+      class_path: asymdsd.layers.Relative3DBiasConfig
+      init_args:
+        num_heads: 3
+        hidden_dim: 64
+        use_distance: true
+
+relation_distill_loss:
+  class_path: asymdsd.loss.LocalRelationDistillLossConfig
+  init_args:
+    num_neighbors: 8
+    beta: 0.5
+
+relative_3d_bias_scale:
+  class_path: asymdsd.components.SequentialSchedule
+  init_args:
+    schedules:
+      - class_path: asymdsd.components.LinearWarmupSchedule
+        init_args:
+          start_value: 0.0
+          final_value: 0.0
+          max_epochs: 120
+      - class_path: asymdsd.components.LinearWarmupSchedule
+        init_args:
+          start_value: 0.0
+          final_value: 1.0
+          max_epochs: 105
+      - class_path: asymdsd.components.LinearWarmupSchedule
+        init_args:
+          start_value: 1.0
+          final_value: 1.0
+          max_epochs: -1
+
+relation_distill_weight:
+  class_path: asymdsd.components.SequentialSchedule
+  init_args:
+    schedules:
+      - class_path: asymdsd.components.LinearWarmupSchedule
+        init_args:
+          start_value: 0.0
+          final_value: 0.0
+          max_epochs: 120
+      - class_path: asymdsd.components.LinearWarmupSchedule
+        init_args:
+          start_value: 0.0
+          final_value: 0.10
+          max_epochs: 105
+      - class_path: asymdsd.components.LinearWarmupSchedule
+        init_args:
+          start_value: 0.10
+          final_value: 0.10
+          max_epochs: -1
+
+hard_region_weight:
+  class_path: asymdsd.components.SequentialSchedule
+  init_args:
+    schedules:
+      - class_path: asymdsd.components.LinearWarmupSchedule
+        init_args:
+          start_value: 0.0
+          final_value: 0.0
+          max_epochs: 225
+      - class_path: asymdsd.components.LinearWarmupSchedule
+        init_args:
+          start_value: 0.0
+          final_value: 0.75
+          max_epochs: 45
+      - class_path: asymdsd.components.LinearWarmupSchedule
+        init_args:
+          start_value: 0.75
+          final_value: 0.75
+          max_epochs: -1
+
+hard_region_topk: 0.25
+hard_region_entropy_weight: 1.0
+hard_region_margin_weight: 1.0
+hard_region_max_weight: 2.0

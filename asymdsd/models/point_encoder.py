@@ -76,6 +76,8 @@ class PointEncoder(nn.Module):
         self,
         x: torch.Tensor,
         pos_enc: torch.Tensor,
+        token_centers: torch.Tensor | None = None,
+        attn_bias_scale: float = 1.0,
         *,
         self_mask: torch.Tensor | None = None,
         self_key_padding_mask: torch.Tensor | None = None,
@@ -89,10 +91,21 @@ class PointEncoder(nn.Module):
             x = torch.cat((cls_token, x), dim=1)
 
             pos_enc = torch.cat((torch.zeros_like(cls_token), pos_enc), dim=1)
+            if token_centers is not None:
+                cls_centers = torch.zeros(
+                    B,
+                    1,
+                    token_centers.shape[-1],
+                    device=token_centers.device,
+                    dtype=token_centers.dtype,
+                )
+                token_centers = torch.cat((cls_centers, token_centers), dim=1)
 
         out: TransformerOutput = self.encoder(
             x,
             pos_enc,
+            token_centers=token_centers,
+            attn_bias_scale=attn_bias_scale,
             self_mask=self_mask,
             self_key_padding_mask=self_key_padding_mask,
             return_attention=return_attention,
@@ -127,10 +140,12 @@ class PointEncoder(nn.Module):
         tokens: Tokens = self.patch_embedding(multi_patches)
         x = tokens.embeddings
         pos_enc = tokens.pos_embeddings
+        token_centers = tokens.centers
 
         out = self.transformer_encoder_forward(
             x,
             pos_enc,
+            token_centers=token_centers,
             self_mask=self_mask,
             self_key_padding_mask=self_key_padding_mask,
             return_attention=return_attention,

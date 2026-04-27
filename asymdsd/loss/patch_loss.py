@@ -10,6 +10,7 @@ class PatchLoss(nn.Module):
         target_logits: torch.Tensor,
         teacher_temp: float = 1.0,
         student_temp: float = 1.0,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         # Sharpening (if temp < 1)
         pred_logits = pred_logits / student_temp
@@ -18,9 +19,14 @@ class PatchLoss(nn.Module):
         pred_logprobs = nn.functional.log_softmax(pred_logits, dim=-1)
         target_probs = nn.functional.softmax(target_logits, dim=-1)
 
-        loss = -(target_probs * pred_logprobs).sum(dim=-1).mean()
+        per_patch = -(target_probs * pred_logprobs).sum(dim=-1)
 
-        return loss
+        if reduction == "none":
+            return per_patch
+        if reduction == "mean":
+            return per_patch.mean()
+
+        raise ValueError(f"Unsupported reduction: {reduction}")
 
 
 class MemEfficientPatchLoss(nn.Module):
