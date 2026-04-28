@@ -1,0 +1,24 @@
+masked_center_predictor_config:
+  class_path: asymdsd.layers.MaskedCenterPredictorConfig
+  init_args:
+    num_heads: 6
+    num_layers: 2
+    hidden_ratio: 4.0
+    norm_layer: asymdsd.layers.RMSNorm
+    act_layer: torch.nn.GELU
+    dropout_p: 0.0
+    drop_path_p: 0.0
+    uniform_drop_path: false
+    efficient_drop_path: true
+    add_pos_enc_every_layer: true
+    bias: false
+    allow_grad_ckpt: false
+    self_attention: true
+    concat_tgt_memory: false
+    query_fourier_bands: 8
+    query_hidden_dim: 128
+    output_hidden_dim: 256
+    predict_residual: true
+
+center_prediction_loss_weight: 0.25
+center_prediction_loss_beta: 0.25

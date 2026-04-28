@@ -33,7 +33,7 @@ callbacks:
   - class_path: asymdsd.callbacks.DefaultTrainerCheckpoint
     init_args:
       save_last: False
-      dirpath: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/log/checkpoints
+      dirpath: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/log_2/checkpoints
 
   # k-NN and linear SVM evals
   - class_path: asymdsd.callbacks.evals.EmbeddingClassifierEval

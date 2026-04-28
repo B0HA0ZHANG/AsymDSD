@@ -1,0 +1,40 @@
+encoder_config:
+  relative_3d_bias:
+    class_path: asymdsd.layers.Relative3DBiasConfig
+    init_args:
+      num_heads: 6
+      hidden_dim: 64
+      use_distance: true
+
+relative_3d_bias_scale: 1.0
+
+relation_distill_loss:
+  class_path: asymdsd.loss.LocalRelationDistillLossConfig
+  init_args:
+    num_neighbors: 8
+    beta: 0.5
+
+relation_distill_on_encoder: true
+
+relation_distill_weight:
+  class_path: asymdsd.components.SequentialSchedule
+  init_args:
+    schedules:
+      - class_path: asymdsd.components.LinearWarmupSchedule
+        init_args:
+          start_value: 0.0
+          final_value: 0.0
+          max_epochs: 120
+      - class_path: asymdsd.components.LinearWarmupSchedule
+        init_args:
+          start_value: 0.0
+          final_value: 0.10
+          max_epochs: 60
+      - class_path: asymdsd.components.LinearWarmupSchedule
+        init_args:
+          start_value: 0.10
+          final_value: 0.10
+          max_epochs: -1
+
+hard_region_weight: 0.0
+regression_loss_weight: 0.0

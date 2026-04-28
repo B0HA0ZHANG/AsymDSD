@@ -7,6 +7,10 @@ from .classification_head import (
 from .drop_path import DropPath
 from .identity import IdentityMultiArg, IdentityPassThrough
 from .layer_scale import LayerScale
+from .masked_center_predictor import (
+    MaskedCenterPredictor,
+    MaskedCenterPredictorConfig,
+)
 from .multilayer_perceptron import MLP, MLPConfig, MLPVarLen
 from .normalization import NormalizationLayer, RMSNorm, TransposeBatchNorm1d
 from .patchify import (
@@ -50,6 +54,8 @@ __all__ = [
     "IdentityMultiArg",
     "IdentityPassThrough",
     "LayerScale",
+    "MaskedCenterPredictor",
+    "MaskedCenterPredictorConfig",
     "MemEfficientPointMaxEmbedding",
     "MemEfficientPointMaxEmbeddingConfig",
     "MultiPointPatchify",

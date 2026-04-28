@@ -111,6 +111,10 @@ class AsymDSD(L.LightningModule):
         relative_3d_bias_scale: FloatMayCall | None = None,
         relation_distill_loss: LocalRelationDistillLossConfig | None = None,
         relation_distill_weight: FloatMayCall | None = None,
+        relation_distill_on_encoder: bool = False,
+        masked_center_predictor_config: MaskedCenterPredictorConfig | None = None,
+        center_prediction_loss_weight: FloatMayCall | None = None,
+        center_prediction_loss_beta: float | None = 0.25,
         hard_region_weight: FloatMayCall | None = None,
         hard_region_topk: float = 0.25,
         hard_region_entropy_weight: float = 1.0,
@@ -186,6 +190,7 @@ class AsymDSD(L.LightningModule):
         self.cls_predictor = cls_predictor  # TODO: Warn when not do_cls
         self.disable_projection = disable_projection
         self.patch_instance_norm = patch_instance_norm
+        self.do_masked_center_prediction = masked_center_predictor_config is not None
 
         if not self.mode.do_cls and self.cls_predictor.is_enabled:
             logger.warning(
@@ -221,6 +226,20 @@ class AsymDSD(L.LightningModule):
         # Both student and teacher always have an identical encoder
         self.student = nn.ModuleDict({"point_encoder": point_encoder()})
         self.teacher = nn.ModuleDict({"point_encoder": point_encoder()})
+
+        if self.do_masked_center_prediction:
+            if not self.mode.do_mask:
+                raise ValueError(
+                    "masked_center_predictor_config is only supported when masking is enabled."
+                )
+            if not self.do_predict:
+                raise ValueError(
+                    "masked_center_predictor_config requires predictor_config to be enabled."
+                )
+            masked_center_predictor_config.embed_dim = self.embed_dim
+            self.student["masked_center_predictor"] = (
+                masked_center_predictor_config.instantiate()
+            )
 
         if self.mode.do_mask:
             self.student["patch_projection_head"] = projection_head()
@@ -274,6 +293,8 @@ class AsymDSD(L.LightningModule):
             self.student["point_encoder"].enable_gradient_checkpointing()
             if self.mode.do_mask and self.do_predict:
                 student_predictor.enable_gradient_checkpointing()
+            if self.do_masked_center_prediction:
+                self.student["masked_center_predictor"].enable_gradient_checkpointing()
 
         self.patch_loss = PatchLoss()  # TODO: Update
         self.cls_loss = ClsLoss()
@@ -282,6 +303,7 @@ class AsymDSD(L.LightningModule):
             if relation_distill_loss is not None
             else None
         )
+        self.relation_distill_on_encoder = relation_distill_on_encoder
         self.koleo_loss = KoLeoLoss(input_is_normalized=False)
         self.me_max_loss = MeanEntropyLoss(dim=self.n_prototypes)
         self.me_max_weight = me_max_weight or 0.0
@@ -298,6 +320,13 @@ class AsymDSD(L.LightningModule):
         self.do_regression = self.regression_loss_weight > 0.0
         self.do_koleo = self.koleo_loss_weight > 0.0
         self.do_classification = self.classification_loss_weight > 0.0
+        self.center_prediction_loss = None
+        if self.do_masked_center_prediction:
+            self.center_prediction_loss = (
+                nn.SmoothL1Loss(beta=center_prediction_loss_beta)
+                if center_prediction_loss_beta is not None
+                else nn.MSELoss()
+            )
         self.hard_region_topk = max(0.0, min(1.0, hard_region_topk))
         self.hard_region_entropy_weight = hard_region_entropy_weight
         self.hard_region_margin_weight = hard_region_margin_weight
@@ -334,6 +363,7 @@ class AsymDSD(L.LightningModule):
             "cls_centering_momentum": cls_centering_momentum,  # Might be None
             "relative_3d_bias_scale": relative_3d_bias_scale or 0.0,
             "relation_distill_weight": relation_distill_weight or 0.0,
+            "center_prediction_loss_weight": center_prediction_loss_weight or 0.0,
             "hard_region_weight": hard_region_weight or 0.0,
         }
 
@@ -416,6 +446,10 @@ class AsymDSD(L.LightningModule):
 
     def _multi_mask_repeat(self, x: torch.Tensor) -> torch.Tensor:
         return x.repeat_interleave(self.multi_mask, dim=0)
+
+    def _masked_patch_indices(self, mask: torch.Tensor) -> torch.Tensor:
+        patch_indices = torch.arange(mask.size(1), device=mask.device).expand_as(mask)
+        return patch_indices[mask].reshape(mask.size(0), -1)
 
     def _create_attn_mask(self, tgt_len: int, src_len: int) -> torch.Tensor:
         # Can create attn_mask such that local masked regions may attend each other.
@@ -525,6 +559,7 @@ class AsymDSD(L.LightningModule):
             "x_cls_embedding": None,
             "x_patch_logits": None,
             "x_patch_embedding": None,
+            "x_patch_visible_embedding": None,
         }
 
         # x is normalized
@@ -552,6 +587,10 @@ class AsymDSD(L.LightningModule):
         # ------- Masked Point Modeling (MPM) -------
         if self.mode.do_mask and mask is not None:
             x_patch = x_patch[indices_masked_crops]
+
+            if return_embeddings and self.relation_distill_on_encoder:
+                x_patch_visible = gather_masked(self._multi_mask_repeat(x_patch), ~mask)
+                out_dict["x_patch_visible_embedding"] = x_patch_visible.flatten(0, 1)
 
             if self.patch_instance_norm:
                 x_patch = torch.nn.functional.instance_norm(x_patch.mT).mT
@@ -622,9 +661,12 @@ class AsymDSD(L.LightningModule):
             "x_cls_embedding_masked": None,
             "x_patch_logits": None,
             "x_patch_embedding": None,
+            "x_patch_visible_embedding": None,
             "x_patch_proj_norm": None,
             "classification_logits": None,
             "classification_logits_masked": None,
+            "masked_center_preds": None,
+            "masked_center_targets": None,
         }
 
         # ------- Invariance Learning (CLS) -------
@@ -720,7 +762,7 @@ class AsymDSD(L.LightningModule):
             )
             # (B*multi_mask*n_blocks, num_masks, F)
             pos_enc_masked = pos_enc_mpm[batch_indices, block_idx].flatten(0, 1)
-            centers_masked = (
+            true_centers_masked = (
                 centers_mpm[batch_indices, block_idx].flatten(0, 1)
                 if centers_mpm is not None
                 else None
@@ -729,13 +771,11 @@ class AsymDSD(L.LightningModule):
         else:
             # (B*multi_mask, num_masks, F)
             pos_enc_masked = gather_masked(pos_enc_mpm, mask)
-            centers_masked = (
+            true_centers_masked = (
                 gather_masked(centers_mpm, mask) if centers_mpm is not None else None
             )
 
-        # Optional noisy queries (normal noise to pos_enc_masked)
-        if self.masked_pos_noise is not None:
-            pos_enc_masked += self.masked_pos_noise * torch.randn_like(pos_enc_masked)
+        centers_masked = true_centers_masked
 
         # --- Mask queries ---
         num_masks = pos_enc_masked.shape[1]
@@ -750,6 +790,46 @@ class AsymDSD(L.LightningModule):
                 token_centers=centers_visible,
                 attn_bias_scale=self.scheduler.value["relative_3d_bias_scale"],
             )
+
+            if return_embeddings and self.relation_distill_on_encoder:
+                out_dict["x_patch_visible_embedding"] = pe_out.patch_features.flatten(
+                    0, 1
+                )
+
+            if self.do_masked_center_prediction and true_centers_masked is not None:
+                visible_memory = pe_out.patch_features
+                center_context_centers = centers_visible
+                if multi_block:
+                    visible_memory = visible_memory.repeat_interleave(num_blocks, dim=0)
+                    center_context_centers = (
+                        centers_visible.repeat_interleave(num_blocks, dim=0)
+                        if centers_visible is not None
+                        else None
+                    )
+                    masked_patch_indices = block_idx.flatten(0, 1)
+                else:
+                    masked_patch_indices = self._masked_patch_indices(mask)
+
+                if center_context_centers is not None:
+                    centers_masked = self.student.masked_center_predictor(
+                        visible_memory,
+                        center_context_centers,
+                        masked_patch_indices,
+                        num_patches=x_mpm.shape[1],
+                    )
+                    pos_enc_masked = point_encoder.patch_embedding.position_embedding(
+                        centers_masked
+                    )
+                    out_dict["masked_center_preds"] = centers_masked.flatten(0, 1)
+                    out_dict["masked_center_targets"] = true_centers_masked.flatten(
+                        0, 1
+                    )
+
+            # Optional noisy queries (normal noise to final masked query positions)
+            if self.masked_pos_noise is not None:
+                pos_enc_masked += self.masked_pos_noise * torch.randn_like(
+                    pos_enc_masked
+                )
 
             # --- Encoded visible context ---
             if self.mode.do_cls:
@@ -1004,6 +1084,7 @@ class AsymDSD(L.LightningModule):
 
         loss = 0.0
         cls_loss = patch_loss = koleo_loss = classification_loss = me_max = None
+        center_prediction_loss = None
         relation_loss = 0.0 if self.local_relation_loss is not None else None
         total_terms = 0
         cls_terms = regression_terms = classification_terms = 0
@@ -1047,40 +1128,74 @@ class AsymDSD(L.LightningModule):
                 total_terms += 1
 
             if (
+                self.do_masked_center_prediction
+                and preds["masked_center_preds"] is not None
+                and preds["masked_center_targets"] is not None
+            ):
+                center_prediction_loss = self.center_prediction_loss(
+                    preds["masked_center_preds"],  # type: ignore[arg-type]
+                    preds["masked_center_targets"],  # type: ignore[arg-type]
+                )
+                center_weight = self.scheduler.value["center_prediction_loss_weight"]
+                if center_weight > 0.0:
+                    loss = loss + center_weight * center_prediction_loss
+                    total_terms += center_weight
+
+            if (
                 self.local_relation_loss is not None
                 and block_idx is None
                 and self.scheduler.value["relation_distill_weight"] > 0.0
             ):
-                masked_centers = gather_masked(
-                    self._multi_mask_repeat(global_centers[indices_masked_crops]),
-                    mask,
-                )
-                num_masked_tokens = masked_centers.shape[1]
-                student_patch_emb = preds["x_patch_embedding"].unflatten(  # type: ignore[union-attr]
-                    0,
-                    (mask.shape[0], num_masked_tokens),  # type: ignore[arg-type]
-                )
-                teacher_patch_emb = targets["x_patch_embedding"].unflatten(  # type: ignore[union-attr]
-                    0,
-                    (mask.shape[0], num_masked_tokens),  # type: ignore[arg-type]
-                )
-
-                if patch_weights is None:
-                    patch_weights = torch.ones(
-                        (mask.shape[0], num_masked_tokens),
-                        device=masked_centers.device,
-                        dtype=student_patch_emb.dtype,
+                if self.relation_distill_on_encoder:
+                    visible_centers = gather_masked(
+                        self._multi_mask_repeat(global_centers[indices_masked_crops]),
+                        ~mask,
+                    )
+                    num_visible_tokens = visible_centers.shape[1]
+                    student_patch_emb = preds["x_patch_visible_embedding"].unflatten(  # type: ignore[union-attr]
+                        0,
+                        (mask.shape[0], num_visible_tokens),  # type: ignore[arg-type]
+                    )
+                    teacher_patch_emb = targets["x_patch_visible_embedding"].unflatten(  # type: ignore[union-attr]
+                        0,
+                        (mask.shape[0], num_visible_tokens),  # type: ignore[arg-type]
+                    )
+                    relation_loss = self.local_relation_loss(
+                        student_patch_emb,
+                        teacher_patch_emb,
+                        visible_centers,
+                    )
+                else:
+                    masked_centers = gather_masked(
+                        self._multi_mask_repeat(global_centers[indices_masked_crops]),
+                        mask,
+                    )
+                    num_masked_tokens = masked_centers.shape[1]
+                    student_patch_emb = preds["x_patch_embedding"].unflatten(  # type: ignore[union-attr]
+                        0,
+                        (mask.shape[0], num_masked_tokens),  # type: ignore[arg-type]
+                    )
+                    teacher_patch_emb = targets["x_patch_embedding"].unflatten(  # type: ignore[union-attr]
+                        0,
+                        (mask.shape[0], num_masked_tokens),  # type: ignore[arg-type]
                     )
 
-                relation_loss_vec = self.local_relation_loss(
-                    student_patch_emb,
-                    teacher_patch_emb,
-                    masked_centers,
-                    reduction="none",
-                )
-                relation_loss = (
-                    relation_loss_vec * patch_weights
-                ).sum() / patch_weights.sum().clamp_min(1e-6)
+                    if patch_weights is None:
+                        patch_weights = torch.ones(
+                            (mask.shape[0], num_masked_tokens),
+                            device=masked_centers.device,
+                            dtype=student_patch_emb.dtype,
+                        )
+
+                    relation_loss_vec = self.local_relation_loss(
+                        student_patch_emb,
+                        teacher_patch_emb,
+                        masked_centers,
+                        reduction="none",
+                    )
+                    relation_loss = (
+                        relation_loss_vec * patch_weights
+                    ).sum() / patch_weights.sum().clamp_min(1e-6)
                 relation_weight = self.scheduler.value["relation_distill_weight"]
                 loss = loss + relation_weight * relation_loss
                 total_terms += relation_weight
@@ -1364,6 +1479,7 @@ class AsymDSD(L.LightningModule):
             "cls_preds": cls_preds,
             "cls_targets": cls_targets,
             "patch_loss": patch_loss,
+            "center_prediction_loss": center_prediction_loss,
             "relation_loss": relation_loss,
             "patch_preds": preds["x_patch_logits"],
             "patch_targets": targets["x_patch_logits"],
@@ -1397,6 +1513,7 @@ class AsymDSD(L.LightningModule):
             "train/loss": True,
             "train/cls_loss": self.mode.do_cls,
             "train/patch_loss": self.mode.do_mask and not self.disable_projection,
+            "train/center_prediction_loss": self.do_masked_center_prediction,
             "train/relation_loss": self.local_relation_loss is not None
             and self.mode.do_mask,
             "train/me_max": self.me_max_weight > 0.0,
