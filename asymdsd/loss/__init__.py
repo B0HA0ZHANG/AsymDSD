@@ -1,6 +1,8 @@
 from .cls_loss import ClsLoss, ClsRegressionLoss
 from .koleo_loss import KoLeoLoss
 from .local_relation_distill_loss import (
+    DiscriminativeRelationDistillLoss,
+    DiscriminativeRelationDistillLossConfig,
     LocalRelationDistillLoss,
     LocalRelationDistillLossConfig,
 )
@@ -11,6 +13,8 @@ __all__ = [
     "ClsLoss",
     "ClsRegressionLoss",
     "KoLeoLoss",
+    "DiscriminativeRelationDistillLoss",
+    "DiscriminativeRelationDistillLossConfig",
     "LocalRelationDistillLoss",
     "LocalRelationDistillLossConfig",
     "MeanEntropyLoss",

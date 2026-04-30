@@ -182,6 +182,71 @@ class RandomTranslatePC(RandomizedPCTransform):
         return points
 
 
+class RandomPartialViewPC(RandomizedPCTransform):
+    def __init__(
+        self,
+        keep_ratio: float | Sequence[float] = (0.55, 0.80),
+        min_points: int = 256,
+        *args,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        if isinstance(keep_ratio, Sequence) and not isinstance(keep_ratio, (str, bytes)):
+            if len(keep_ratio) != 2:
+                raise ValueError(
+                    f"keep_ratio sequence must have length 2, got {keep_ratio}."
+                )
+            keep_ratio = (float(keep_ratio[0]), float(keep_ratio[1]))
+
+        if isinstance(keep_ratio, tuple):
+            if keep_ratio[0] <= 0 or keep_ratio[1] > 1 or keep_ratio[0] > keep_ratio[1]:
+                raise ValueError(
+                    f"keep_ratio must be in (0, 1] with min <= max, got {keep_ratio}."
+                )
+        else:
+            if keep_ratio <= 0 or keep_ratio > 1:
+                raise ValueError(f"keep_ratio must be in (0, 1], got {keep_ratio}.")
+
+        if min_points < 1:
+            raise ValueError(f"min_points must be >= 1, got {min_points}.")
+
+        self.keep_ratio = keep_ratio
+        self.min_points = min_points
+
+    def _sample_keep_ratio(self) -> float:
+        if isinstance(self.keep_ratio, tuple):
+            return float(
+                self.generator.uniform(self.keep_ratio[0], self.keep_ratio[1])
+            )
+        return float(self.keep_ratio)
+
+    def transform(self, points: np.ndarray) -> np.ndarray:
+        keep_ratio = self._sample_keep_ratio()
+        out_points: list[np.ndarray] = []
+
+        for sample in points:
+            num_points = sample.shape[0]
+            if num_points <= self.min_points:
+                out_points.append(sample)
+                continue
+
+            num_keep = max(self.min_points, int(round(keep_ratio * num_points)))
+            num_keep = min(num_keep, num_points)
+
+            xyz = sample[..., :3]
+            xyz_centered = xyz - xyz.mean(axis=0, keepdims=True)
+
+            view_dir = self.generator.normal(size=3)
+            view_dir /= np.linalg.norm(view_dir) + 1e-12
+
+            depth = xyz_centered @ view_dir
+            keep_idx = np.argpartition(depth, -num_keep)[-num_keep:]
+
+            out_points.append(sample[keep_idx])
+
+        return np.stack(out_points, axis=0).astype(points.dtype, copy=False)
+
+
 class UniformSubSamplePC(RandomizedPCTransform):
     def __init__(self, num_points: int = 1024, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)

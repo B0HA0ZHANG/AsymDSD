@@ -30,6 +30,7 @@ from ..loggers import get_default_logger
 from ..loss import (
     ClsLoss,
     ClsRegressionLoss,
+    DiscriminativeRelationDistillLossConfig,
     KoLeoLoss,
     LocalRelationDistillLossConfig,
     MeanEntropyLoss,
@@ -109,7 +110,9 @@ class AsymDSD(L.LightningModule):
         regression_loss_weight: float | None = None,
         regression_loss_beta: float | None = None,
         relative_3d_bias_scale: FloatMayCall | None = None,
-        relation_distill_loss: LocalRelationDistillLossConfig | None = None,
+        relation_distill_loss: LocalRelationDistillLossConfig
+        | DiscriminativeRelationDistillLossConfig
+        | None = None,
         relation_distill_weight: FloatMayCall | None = None,
         relation_distill_on_encoder: bool = False,
         masked_center_predictor_config: MaskedCenterPredictorConfig | None = None,
@@ -1086,6 +1089,8 @@ class AsymDSD(L.LightningModule):
         cls_loss = patch_loss = koleo_loss = classification_loss = me_max = None
         center_prediction_loss = None
         relation_loss = 0.0 if self.local_relation_loss is not None else None
+        relation_pos_loss = relation_margin_loss = None
+        relation_teacher_margin = relation_student_margin = None
         total_terms = 0
         cls_terms = regression_terms = classification_terms = 0
         regression_loss = 0.0 if self.do_regression else None
@@ -1199,6 +1204,16 @@ class AsymDSD(L.LightningModule):
                 relation_weight = self.scheduler.value["relation_distill_weight"]
                 loss = loss + relation_weight * relation_loss
                 total_terms += relation_weight
+                relation_stats = getattr(self.local_relation_loss, "last_stats", None)
+                if relation_stats is not None:
+                    relation_pos_loss = relation_stats.get("relation_pos_loss")
+                    relation_margin_loss = relation_stats.get("relation_margin_loss")
+                    relation_teacher_margin = relation_stats.get(
+                        "relation_teacher_margin"
+                    )
+                    relation_student_margin = relation_stats.get(
+                        "relation_student_margin"
+                    )
 
             if self.do_regression:
                 regression_loss = self.patch_regression_loss(
@@ -1481,6 +1496,10 @@ class AsymDSD(L.LightningModule):
             "patch_loss": patch_loss,
             "center_prediction_loss": center_prediction_loss,
             "relation_loss": relation_loss,
+            "relation_pos_loss": relation_pos_loss,
+            "relation_margin_loss": relation_margin_loss,
+            "relation_teacher_margin": relation_teacher_margin,
+            "relation_student_margin": relation_student_margin,
             "patch_preds": preds["x_patch_logits"],
             "patch_targets": targets["x_patch_logits"],
             "me_max": me_max,
@@ -1515,6 +1534,14 @@ class AsymDSD(L.LightningModule):
             "train/patch_loss": self.mode.do_mask and not self.disable_projection,
             "train/center_prediction_loss": self.do_masked_center_prediction,
             "train/relation_loss": self.local_relation_loss is not None
+            and self.mode.do_mask,
+            "train/relation_pos_loss": self.local_relation_loss is not None
+            and self.mode.do_mask,
+            "train/relation_margin_loss": self.local_relation_loss is not None
+            and self.mode.do_mask,
+            "train/relation_teacher_margin": self.local_relation_loss is not None
+            and self.mode.do_mask,
+            "train/relation_student_margin": self.local_relation_loss is not None
             and self.mode.do_mask,
             "train/me_max": self.me_max_weight > 0.0,
             "train/koleo_loss": self.do_koleo,

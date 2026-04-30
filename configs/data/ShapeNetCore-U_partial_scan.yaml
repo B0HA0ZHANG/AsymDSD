@@ -1,0 +1,76 @@
+class_path: asymdsd.data.UnsupervisedZarrPCDataModule
+init_args:
+  name: ShapeNetCore
+  dataset:
+    dataset_path: data/ShapeNetCore.v2.zarr
+    dataset_builder:
+      class_path: asymdsd.data.datasets_.ShapeNetCoreV2Builder
+      init_args:
+        data_path: data/ShapeNetCore.v2.zip
+        num_pre_sample_points: 16384
+    num_workers_create_ds: 24
+
+  batch_size: 128
+  max_num_points: 1024
+  num_workers_train: 12
+  num_workers_val_test: 0
+  pin_memory: true
+
+  subsample_transform:
+    class_path: asymdsd.data.transforms.CropSampleArrays
+    init_args:
+      num_points_range:
+        - 1024
+        - 1024
+      crop_scale:
+        - 0.4
+        - 1.0
+      aspect_ratio:
+        - 0.33
+        - 3.0
+
+  augmentation_transform:
+    - class_path: asymdsd.data.RandomRotateAxisPC
+      init_args:
+        axis: "Z"
+    - class_path: asymdsd.data.RandomPartialViewPC
+      init_args:
+        keep_ratio: [0.55, 0.80]
+        min_points: 512
+    - class_path: asymdsd.data.RandomAnisotropicScalePC
+      init_args:
+        scale_range: [0.8, 1.2]
+
+  patchify:
+    global_patchify:
+      class_path: asymdsd.data.PatchifyPC
+      init_args:
+        num_patches: 64
+        patch_size: 32
+    local_patchify:
+      class_path: asymdsd.data.PatchifyPC
+      init_args:
+        num_patches: 16
+        patch_size: 32
+
+  multi_crop_config:
+    global_cfg:
+      num_crops: 2
+      num_points_range:
+        - 1024
+        - 1024
+      scale:
+        - 0.4
+        - 1.0
+      pre_crop_transform:
+    local_cfg:
+      num_crops: 4
+      num_points_range:
+        - 256
+        - 256
+      scale:
+        - 0.05
+        - 0.4
+      pre_crop_transform:
+
+  seed:
