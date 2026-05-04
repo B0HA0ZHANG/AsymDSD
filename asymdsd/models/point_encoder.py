@@ -72,6 +72,16 @@ class PointEncoder(nn.Module):
 
         self._gradient_checkpointing = False
 
+    def apply_output_norm(self, x: torch.Tensor) -> torch.Tensor:
+        return self.encoder.norm(x)
+
+    def split_tokens(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, OptionalTensor]:
+        if self.cls_token is not None:
+            return x[:, 1:], x[:, 0]
+        return x, None
+
     def transformer_encoder_forward(
         self,
         x: torch.Tensor,
@@ -112,12 +122,7 @@ class PointEncoder(nn.Module):
             return_hidden_states=return_hidden_states,
         )
 
-        if self.cls_token is not None:
-            cls_features = out.x[:, 0]
-            patch_features = out.x[:, 1:]
-        else:
-            cls_features = None
-            patch_features = out.x
+        patch_features, cls_features = self.split_tokens(out.x)
 
         return PointEncoderOutput(
             patch_features=patch_features,

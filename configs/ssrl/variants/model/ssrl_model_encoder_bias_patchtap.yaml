@@ -1,0 +1,15 @@
+encoder_config:
+  relative_3d_bias:
+    class_path: asymdsd.layers.Relative3DBiasConfig
+    init_args:
+      num_heads: 6
+      hidden_dim: 64
+      use_distance: true
+
+relative_3d_bias_scale: 1.0
+
+patch_supervision_layer: -4
+patch_supervision_use_encoder_norm: true
+
+hard_region_weight: 0.0
+regression_loss_weight: 0.0

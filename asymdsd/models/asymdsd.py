@@ -37,7 +37,7 @@ from ..loss import (
     # MemEfficientPatchLoss,
     PatchLoss,
 )
-from .point_encoder import PointEncoder
+from .point_encoder import PointEncoder, PointEncoderOutput
 
 logger = get_default_logger()
 
@@ -110,6 +110,8 @@ class AsymDSD(L.LightningModule):
         regression_loss_weight: float | None = None,
         regression_loss_beta: float | None = None,
         relative_3d_bias_scale: FloatMayCall | None = None,
+        patch_supervision_layer: int | None = None,
+        patch_supervision_use_encoder_norm: bool = True,
         relation_distill_loss: LocalRelationDistillLossConfig
         | DiscriminativeRelationDistillLossConfig
         | None = None,
@@ -144,6 +146,16 @@ class AsymDSD(L.LightningModule):
         self.act_layer = encoder_config.act_layer
         self.embed_dim = encoder_config.embed_dim
         self.n_prototypes = projection_head_config.out_dim
+        self.patch_supervision_layer = patch_supervision_layer
+        self.patch_supervision_use_encoder_norm = patch_supervision_use_encoder_norm
+
+        if patch_supervision_layer is not None:
+            num_layers = encoder_config.num_layers
+            if not -num_layers <= patch_supervision_layer < num_layers:
+                raise ValueError(
+                    f"patch_supervision_layer must be in [{-num_layers}, {num_layers - 1}], "
+                    f"got {patch_supervision_layer}."
+                )
 
         self.mode = training_mode
 
@@ -541,6 +553,30 @@ class AsymDSD(L.LightningModule):
         weights = torch.where(hard_mask, weights, torch.ones_like(weights))
         return weights.detach()
 
+    def _use_intermediate_patch_supervision(self) -> bool:
+        return self.mode.do_mask and self.patch_supervision_layer is not None
+
+    def _select_patch_supervision_features(
+        self,
+        point_encoder: PointEncoder,
+        pe_out: PointEncoderOutput,
+    ) -> torch.Tensor:
+        if not self._use_intermediate_patch_supervision():
+            return pe_out.patch_features
+
+        hidden_states = pe_out.hidden_states
+        if hidden_states is None:
+            raise RuntimeError(
+                "Intermediate patch supervision requested, but hidden states were not returned."
+            )
+
+        hidden = hidden_states[self.patch_supervision_layer]  # type: ignore[index]
+        if self.patch_supervision_use_encoder_norm:
+            hidden = point_encoder.apply_output_norm(hidden)
+
+        patch_features, _ = point_encoder.split_tokens(hidden)
+        return patch_features
+
     @torch.no_grad()
     def forward_teacher(
         self,
@@ -571,9 +607,10 @@ class AsymDSD(L.LightningModule):
             pos_enc,
             token_centers=token_centers,
             attn_bias_scale=self.scheduler.value["relative_3d_bias_scale"],
+            return_hidden_states=self._use_intermediate_patch_supervision(),
         )
         x_cls = pe_out.cls_features  # type: ignore
-        x_patch = pe_out.patch_features
+        x_patch = self._select_patch_supervision_features(point_encoder, pe_out)
 
         # ------- Invariance Learning (CLS) -------
         if self.mode.do_cls:
@@ -792,15 +829,17 @@ class AsymDSD(L.LightningModule):
                 pos_enc_visible,
                 token_centers=centers_visible,
                 attn_bias_scale=self.scheduler.value["relative_3d_bias_scale"],
+                return_hidden_states=self._use_intermediate_patch_supervision(),
+            )
+            x_patch_context = self._select_patch_supervision_features(
+                point_encoder, pe_out
             )
 
             if return_embeddings and self.relation_distill_on_encoder:
-                out_dict["x_patch_visible_embedding"] = pe_out.patch_features.flatten(
-                    0, 1
-                )
+                out_dict["x_patch_visible_embedding"] = x_patch_context.flatten(0, 1)
 
             if self.do_masked_center_prediction and true_centers_masked is not None:
-                visible_memory = pe_out.patch_features
+                visible_memory = x_patch_context
                 center_context_centers = centers_visible
                 if multi_block:
                     visible_memory = visible_memory.repeat_interleave(num_blocks, dim=0)
@@ -837,8 +876,9 @@ class AsymDSD(L.LightningModule):
             # --- Encoded visible context ---
             if self.mode.do_cls:
                 x_cls = pe_out.cls_features
-                x_patch = pe_out.patch_features
-                x_context = torch.concat((x_cls.unsqueeze(1), x_patch), dim=1)  # type: ignore
+                x_context = torch.concat(
+                    (x_cls.unsqueeze(1), x_patch_context), dim=1
+                )  # type: ignore
                 if centers_visible is not None:
                     cls_centers = torch.zeros(
                         centers_visible.shape[0],
@@ -851,7 +891,7 @@ class AsymDSD(L.LightningModule):
                 else:
                     context_centers = None
             else:
-                x_context = pe_out.patch_features
+                x_context = x_patch_context
                 context_centers = centers_visible
 
             # --- Compute prediction ---
@@ -954,10 +994,12 @@ class AsymDSD(L.LightningModule):
                 pos_enc_input,
                 token_centers=centers_input,
                 attn_bias_scale=self.scheduler.value["relative_3d_bias_scale"],
+                return_hidden_states=self._use_intermediate_patch_supervision(),
             )
 
             x_cls = pe_out.cls_features
-            x_patch = pe_out.patch_features[:, -num_masks:]
+            x_patch_all = self._select_patch_supervision_features(point_encoder, pe_out)
+            x_patch = x_patch_all[:, -num_masks:]
 
         # --- CLS embeddings and logits ---
         if self.mode.do_cls:
