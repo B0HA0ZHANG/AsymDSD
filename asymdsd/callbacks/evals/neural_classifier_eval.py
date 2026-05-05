@@ -3,6 +3,7 @@ from typing import Any, Iterable
 
 import lightning as L
 import torch
+from lightning.pytorch.utilities.rank_zero import rank_zero_warn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -189,11 +190,18 @@ class NeuralClassifierEval(L.Callback):
     def _run_evaluation(self, trainer: L.Trainer) -> None:
         if self.empty_cache:
             torch.cuda.empty_cache()
-        self._init_classifier()
-        self._fit()
-        self._log_metrics()
-        self._restore_encoder()
-        self._del_references()
+        try:
+            self._init_classifier()
+            self._fit()
+            self._log_metrics()
+            self._restore_encoder()
+        except (RuntimeError, ValueError) as exc:
+            rank_zero_warn(
+                f"Skipping {self.classifier_name} on {self.benchmark_name} "
+                f"due to evaluation failure: {exc}"
+            )
+        finally:
+            self._del_references()
 
         if self.empty_cache:
             torch.cuda.empty_cache()
@@ -254,9 +262,12 @@ class NeuralClassifierEval(L.Callback):
             self.classifier.point_encoder.requires_grad_(False)
 
     def _del_references(self):
-        del self.classifier
-        del self.optimizer
-        del self.fabric
+        if hasattr(self, "classifier"):
+            del self.classifier
+        if hasattr(self, "optimizer"):
+            del self.optimizer
+        if hasattr(self, "fabric"):
+            del self.fabric
 
     # def on_validation_epoch_end(self, trainer, pl_module):
     #     self._log_metrics()

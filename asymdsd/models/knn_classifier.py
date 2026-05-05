@@ -20,6 +20,14 @@ class KNNClassifier(BaseEmbeddingClassifier):
     def validation_step(self, batch: dict[str, Any]) -> dict[str, Any]:
         target_embeddings = self.extract_embeddings(batch)[0]
         val_labels: torch.Tensor = batch[PCFieldKey.CLOUD_LABEL]
+        target_embeddings, filtered_labels = self.filter_finite_embeddings(
+            target_embeddings,
+            val_labels,
+            stage="validation",
+        )
+        if target_embeddings.numel() == 0:
+            return {"pred_indices": torch.empty(0, device=val_labels.device, dtype=torch.long), "target_indices": torch.empty(0, device=val_labels.device, dtype=torch.long)}
+        val_labels = filtered_labels  # type: ignore[assignment]
         B = len(val_labels)
 
         similarity = target_embeddings @ self.embeddings.T  # type: ignore
@@ -48,6 +56,12 @@ class KNNClassifier(BaseEmbeddingClassifier):
 
     def predict_step(self, batch: dict[str, Any]) -> dict[str, Any]:
         embeddings = self.extract_embeddings(batch)[0]
+        embeddings, _ = self.filter_finite_embeddings(
+            embeddings,
+            stage="predict",
+        )
+        if embeddings.numel() == 0:
+            return {"pred_indices": torch.empty(0, device=batch[PCFieldKey.POINTS].device, dtype=torch.long)}
         B = embeddings.size(0)
 
         similarity = embeddings @ self.embeddings.T  # type: ignore

@@ -139,10 +139,38 @@ class BaseEmbeddingClassifier(EmbeddingModel, ABC):
         if not self._is_finalized:
             self.embeddings = torch.cat(self.embeddings)  # type: ignore
             self.labels = torch.cat(self.labels)  # type: ignore
+            self.embeddings, self.labels = self.filter_finite_embeddings(
+                self.embeddings,
+                self.labels,
+                stage="fit",
+            )
 
             self._is_finalized = True
             if self.save_embeddings_path:
                 self.save_embeddings(self.save_embeddings_path)
+
+    def filter_finite_embeddings(
+        self,
+        embeddings: torch.Tensor,
+        labels: torch.Tensor | None = None,
+        *,
+        stage: str,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        finite_mask = torch.isfinite(embeddings).all(dim=-1)
+        if finite_mask.all():
+            return embeddings, labels
+
+        num_bad = (~finite_mask).sum().item()
+        logger.warning(
+            "Dropping %s non-finite embedding samples during %s for %s.",
+            num_bad,
+            stage,
+            self.classifier_name,
+        )
+        embeddings = embeddings[finite_mask]
+        if labels is not None:
+            labels = labels[finite_mask]
+        return embeddings, labels
 
     def save_embeddings(self, path: PathLike) -> None:
         if not self._is_finalized:

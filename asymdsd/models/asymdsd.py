@@ -242,6 +242,17 @@ class AsymDSD(L.LightningModule):
         self.student = nn.ModuleDict({"point_encoder": point_encoder()})
         self.teacher = nn.ModuleDict({"point_encoder": point_encoder()})
 
+        if (
+            self._use_intermediate_patch_supervision()
+            and self.patch_supervision_use_encoder_norm
+        ):
+            self.student["patch_supervision_norm"] = encoder_config.norm_layer(
+                self.embed_dim
+            )
+            self.teacher["patch_supervision_norm"] = encoder_config.norm_layer(
+                self.embed_dim
+            )
+
         if self.do_masked_center_prediction:
             if not self.mode.do_mask:
                 raise ValueError(
@@ -560,6 +571,7 @@ class AsymDSD(L.LightningModule):
         self,
         point_encoder: PointEncoder,
         pe_out: PointEncoderOutput,
+        patch_supervision_norm: nn.Module | None = None,
     ) -> torch.Tensor:
         if not self._use_intermediate_patch_supervision():
             return pe_out.patch_features
@@ -571,11 +583,18 @@ class AsymDSD(L.LightningModule):
             )
 
         hidden = hidden_states[self.patch_supervision_layer]  # type: ignore[index]
-        if self.patch_supervision_use_encoder_norm:
+        if patch_supervision_norm is not None:
+            hidden = patch_supervision_norm(hidden)
+        elif self.patch_supervision_use_encoder_norm:
             hidden = point_encoder.apply_output_norm(hidden)
 
         patch_features, _ = point_encoder.split_tokens(hidden)
         return patch_features
+
+    def _get_patch_supervision_norm(self, branch: nn.ModuleDict) -> nn.Module | None:
+        if "patch_supervision_norm" not in branch:
+            return None
+        return branch["patch_supervision_norm"]
 
     @torch.no_grad()
     def forward_teacher(
@@ -610,7 +629,11 @@ class AsymDSD(L.LightningModule):
             return_hidden_states=self._use_intermediate_patch_supervision(),
         )
         x_cls = pe_out.cls_features  # type: ignore
-        x_patch = self._select_patch_supervision_features(point_encoder, pe_out)
+        x_patch = self._select_patch_supervision_features(
+            point_encoder,
+            pe_out,
+            self._get_patch_supervision_norm(self.teacher),
+        )
 
         # ------- Invariance Learning (CLS) -------
         if self.mode.do_cls:
@@ -832,7 +855,9 @@ class AsymDSD(L.LightningModule):
                 return_hidden_states=self._use_intermediate_patch_supervision(),
             )
             x_patch_context = self._select_patch_supervision_features(
-                point_encoder, pe_out
+                point_encoder,
+                pe_out,
+                self._get_patch_supervision_norm(self.student),
             )
 
             if return_embeddings and self.relation_distill_on_encoder:
@@ -998,7 +1023,11 @@ class AsymDSD(L.LightningModule):
             )
 
             x_cls = pe_out.cls_features
-            x_patch_all = self._select_patch_supervision_features(point_encoder, pe_out)
+            x_patch_all = self._select_patch_supervision_features(
+                point_encoder,
+                pe_out,
+                self._get_patch_supervision_norm(self.student),
+            )
             x_patch = x_patch_all[:, -num_masks:]
 
         # --- CLS embeddings and logits ---

@@ -2,6 +2,7 @@ from typing import Any, Iterable
 
 import lightning as L
 import torch
+from lightning.pytorch.utilities.rank_zero import rank_zero_warn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -122,10 +123,17 @@ class EmbeddingClassifierEval(L.Callback):
 
         for classifier in self.classifiers:
             # TODO: No need to iterate, reuse embeddings (However needs to call on_train_epoch_end)
-            self._fit(classifier)
-            self._evaluate(classifier)
-            self._log_metrics(classifier, pl_module)
-            classifier.reset()
+            try:
+                self._fit(classifier)
+                self._evaluate(classifier)
+                self._log_metrics(classifier, pl_module)
+            except (RuntimeError, ValueError) as exc:
+                rank_zero_warn(
+                    f"Skipping {self.eval_name_prefix}{classifier.name} on "
+                    f"{self.benchmark_name} due to evaluation failure: {exc}"
+                )
+            finally:
+                classifier.reset()
 
         if self.empty_cache:
             torch.cuda.empty_cache()
