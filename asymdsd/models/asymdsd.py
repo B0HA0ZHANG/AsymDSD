@@ -1581,7 +1581,7 @@ class AsymDSD(L.LightningModule):
             loss = loss + cls_loss
             total_terms += 1
 
-            sequential_weight = self.scheduler.value["sequential_view_weight"]
+            sequential_weight = self.scheduler.value.get("sequential_view_weight", 0.0)
             if sequential_crops_dict is not None and sequential_weight > 0.0:
                 sequential_preds = self.forward_student_sequential(
                     sequential_crops_dict,  # type: ignore[arg-type]
@@ -1693,7 +1693,7 @@ class AsymDSD(L.LightningModule):
             "train/loss": True,
             "train/cls_loss": self.mode.do_cls,
             "train/sequential_cls_loss": self.mode.do_cls
-            and self.scheduler.value["sequential_view_weight"] > 0.0,
+            and self.scheduler.value.get("sequential_view_weight", 0.0) > 0.0,
             "train/patch_loss": self.mode.do_mask and not self.disable_projection,
             "train/center_prediction_loss": self.do_masked_center_prediction,
             "train/relation_loss": self.local_relation_loss is not None

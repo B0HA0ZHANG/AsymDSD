@@ -236,4 +236,5 @@ class Scheduler:
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         self._step = state_dict["step"]
-        self._value = state_dict["last_values"]
+        self._update_values()
+        self._value.update(state_dict.get("last_values", {}))
