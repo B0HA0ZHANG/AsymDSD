@@ -109,6 +109,9 @@ class AsymDSD(L.LightningModule):
         classification_label_smoothing: float | None = 0.2,
         regression_loss_weight: float | None = None,
         regression_loss_beta: float | None = None,
+        sequential_state_tokens: int = 1,
+        sequential_view_weight: FloatMayCall | None = None,
+        sequential_stop_grad: bool = True,
         relative_3d_bias_scale: FloatMayCall | None = None,
         patch_supervision_layer: int | None = None,
         patch_supervision_use_encoder_norm: bool = True,
@@ -146,6 +149,8 @@ class AsymDSD(L.LightningModule):
         self.act_layer = encoder_config.act_layer
         self.embed_dim = encoder_config.embed_dim
         self.n_prototypes = projection_head_config.out_dim
+        self.sequential_state_tokens = max(1, sequential_state_tokens)
+        self.sequential_stop_grad = sequential_stop_grad
         self.patch_supervision_layer = patch_supervision_layer
         self.patch_supervision_use_encoder_norm = patch_supervision_use_encoder_norm
 
@@ -231,7 +236,12 @@ class AsymDSD(L.LightningModule):
         def point_encoder():
             return PointEncoder(
                 patchify=self.patchify,
-                cls_token=TrainableToken(self.embed_dim) if self.mode.do_cls else None,
+                cls_token=TrainableToken(
+                    self.embed_dim,
+                    self.sequential_state_tokens,
+                )
+                if self.mode.do_cls
+                else None,
                 patch_embedding=patch_embedding.instantiate(),
                 encoder=encoder_config.instantiate(),
             )
@@ -387,6 +397,7 @@ class AsymDSD(L.LightningModule):
             "patch_student_temp": patch_student_temp,
             "patch_centering_momentum": patch_centering_momentum,  # Might be None
             "cls_centering_momentum": cls_centering_momentum,  # Might be None
+            "sequential_view_weight": sequential_view_weight or 0.0,
             "relative_3d_bias_scale": relative_3d_bias_scale or 0.0,
             "relation_distill_weight": relation_distill_weight or 0.0,
             "center_prediction_loss_weight": center_prediction_loss_weight or 0.0,
@@ -1061,6 +1072,68 @@ class AsymDSD(L.LightningModule):
 
         return out_dict
 
+    def forward_student_sequential(
+        self,
+        sequential_crops_dict: dict[str, torch.Tensor],
+        return_embeddings: bool = False,
+    ) -> dict[str, torch.Tensor]:
+        if not self.mode.do_cls:
+            raise RuntimeError("Sequential view requires CLS training to be enabled.")
+
+        point_encoder: PointEncoder = self.student.point_encoder
+
+        B, T, _, _ = sequential_crops_dict["points"].shape
+        sequential_patch_points = PatchPoints(
+            points=sequential_crops_dict["points"],
+            num_points=sequential_crops_dict.get("num_points"),
+            patches_idx=sequential_crops_dict.get("patches_idx"),
+            centers_idx=sequential_crops_dict.get("centers_idx"),
+        )
+        sequential_patch_points = self._flatten_to_batch(sequential_patch_points)
+
+        multi_patches = self._extract_patches(
+            sequential_patch_points,
+            self.local_patchify,
+        )
+
+        tokens: Tokens = point_encoder.patch_embedding(multi_patches)
+        x = tokens.embeddings.unflatten(0, (B, T))
+        pos_enc = tokens.pos_embeddings.unflatten(0, (B, T))
+        token_centers = (
+            tokens.centers.unflatten(0, (B, T))
+            if tokens.centers is not None
+            else None
+        )
+
+        state_tokens = None
+        cls_logits = []
+        cls_embeddings = []
+
+        for step in range(T):
+            if state_tokens is not None and self.sequential_stop_grad:
+                state_tokens = state_tokens.detach()
+
+            pe_out = point_encoder.transformer_encoder_forward(
+                x[:, step],
+                pos_enc[:, step],
+                token_centers=token_centers[:, step]
+                if token_centers is not None
+                else None,
+                attn_bias_scale=self.scheduler.value["relative_3d_bias_scale"],
+                state_tokens=state_tokens,
+            )
+            state_tokens = pe_out.state_features
+            x_cls: torch.Tensor = pe_out.cls_features  # type: ignore
+
+            cls_logits.append(self.student.cls_projection_head(x_cls)[0])
+            if return_embeddings:
+                cls_embeddings.append(x_cls)
+
+        out = {"x_cls_logits": torch.stack(cls_logits, dim=1)}
+        if return_embeddings:
+            out["x_cls_embedding"] = torch.stack(cls_embeddings, dim=1)
+        return out
+
     def training_step(
         self,
         batch: dict[str, torch.Tensor | dict[str, torch.Tensor]],
@@ -1069,6 +1142,7 @@ class AsymDSD(L.LightningModule):
         # If no nested key,
         global_crops_dict = batch.get("global_crops") or batch
         local_crops_dict = batch.get("local_crops")
+        sequential_crops_dict = batch.get("sequential_crops")
 
         global_patch_points = PatchPoints(
             points=global_crops_dict["points"],  # type: ignore
@@ -1158,6 +1232,7 @@ class AsymDSD(L.LightningModule):
 
         loss = 0.0
         cls_loss = patch_loss = koleo_loss = classification_loss = me_max = None
+        sequential_cls_loss = None
         center_prediction_loss = None
         relation_loss = 0.0 if self.local_relation_loss is not None else None
         relation_pos_loss = relation_margin_loss = None
@@ -1506,6 +1581,20 @@ class AsymDSD(L.LightningModule):
             loss = loss + cls_loss
             total_terms += 1
 
+            sequential_weight = self.scheduler.value["sequential_view_weight"]
+            if sequential_crops_dict is not None and sequential_weight > 0.0:
+                sequential_preds = self.forward_student_sequential(
+                    sequential_crops_dict,  # type: ignore[arg-type]
+                    return_embeddings=False,
+                )
+                sequential_cls_loss = self.cls_loss(
+                    sequential_preds["x_cls_logits"],
+                    cls_target_probs,
+                    student_temp=self.scheduler.value["cls_student_temp"],
+                )
+                loss = loss + sequential_weight * sequential_cls_loss
+                total_terms += sequential_weight
+
             if self.do_koleo:
                 # TODO: Apply koleo loss to masked global crops
                 koleo_loss = self.koleo_loss(cls_embedding_preds)
@@ -1562,6 +1651,7 @@ class AsymDSD(L.LightningModule):
         return {
             "loss": loss,
             "cls_loss": cls_loss,
+            "sequential_cls_loss": sequential_cls_loss,
             "cls_preds": cls_preds,
             "cls_targets": cls_targets,
             "patch_loss": patch_loss,
@@ -1602,6 +1692,8 @@ class AsymDSD(L.LightningModule):
         log_conditions = {
             "train/loss": True,
             "train/cls_loss": self.mode.do_cls,
+            "train/sequential_cls_loss": self.mode.do_cls
+            and self.scheduler.value["sequential_view_weight"] > 0.0,
             "train/patch_loss": self.mode.do_mask and not self.disable_projection,
             "train/center_prediction_loss": self.do_masked_center_prediction,
             "train/relation_loss": self.local_relation_loss is not None
@@ -1632,6 +1724,7 @@ class AsymDSD(L.LightningModule):
                     in [
                         "train/loss",
                         "train/cls_loss",
+                        "train/sequential_cls_loss",
                         "train/patch_loss",
                         "train/regression_loss",
                     ],

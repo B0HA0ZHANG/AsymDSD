@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 from jsonargparse import lazy_instance
@@ -80,7 +80,9 @@ class CropConfig:
     num_points_range: tuple[int | None, int | None] = (1024, 1024)
     scale: float | tuple[float, float] = (0.4, 1.0)  # Set to 1.0 for no crop
     aspect_ratio: tuple[float, float] = (0.33, 3.0)
-    pre_crop_transform: PCTransform = _DEFAULT_AUGMENTATION_TRANSFORM
+    pre_crop_transform: PCTransform | Sequence[PCTransform] | None = (
+        _DEFAULT_AUGMENTATION_TRANSFORM
+    )
 
     def __post_init__(self) -> None:
         self.scale = (
@@ -92,6 +94,7 @@ class CropConfig:
 class MultiCropConfig:
     global_cfg: CropConfig = field(default_factory=lambda: CropConfig(2))
     local_cfg: CropConfig | None = None
+    sequential_cfg: CropConfig | None = None
 
 
 class PointMultiCrop:
@@ -104,6 +107,7 @@ class PointMultiCrop:
         self.mc_cfg = multi_crop_config
         self.global_cfg = global_cfg = self.mc_cfg.global_cfg
         self.local_cfg = local_cfg = self.mc_cfg.local_cfg
+        self.sequential_cfg = sequential_cfg = self.mc_cfg.sequential_cfg
 
         self.seed = seed
         self.generator = np.random.default_rng(seed)
@@ -128,6 +132,12 @@ class PointMultiCrop:
                 local_cfg.pre_crop_transform, seed=self.seed
             )
 
+        if sequential_cfg:
+            self.sample_crop_sequential = _get_sample_fn(sequential_cfg)
+            self.sequential_transform = compose_transform(
+                sequential_cfg.pre_crop_transform, seed=self.seed
+            )
+
     def multi_crop_sample(
         self,
         points: np.ndarray,
@@ -142,6 +152,17 @@ class PointMultiCrop:
             crop = sample_fn(points, features_dict)
             crops.append(crop)
         return crops
+
+    def sequential_crop_sample(
+        self,
+        points: np.ndarray,
+        num_crops: int,
+        transform: Callable[[np.ndarray], np.ndarray],
+        sample_fn: Callable[[np.ndarray, dict | None], np.ndarray],
+        features_dict: dict[str, np.ndarray] | None = None,
+    ) -> list[dict[str, np.ndarray]]:
+        points = transform(points)
+        return [sample_fn(points, features_dict) for _ in range(num_crops)]
 
     # Change to arrays dict
     def __call__(
@@ -168,5 +189,15 @@ class PointMultiCrop:
                 features_dict,
             )
             crop_dict["local_crops"] = local_crops
+
+        if cfg.sequential_cfg and cfg.sequential_cfg.num_crops > 0:
+            sequential_crops = self.sequential_crop_sample(
+                points,
+                cfg.sequential_cfg.num_crops,
+                self.sequential_transform,
+                self.sample_crop_sequential,
+                features_dict,
+            )
+            crop_dict["sequential_crops"] = sequential_crops
 
         return crop_dict

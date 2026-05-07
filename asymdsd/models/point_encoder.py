@@ -30,6 +30,7 @@ class PointEncoderOutput(NamedTuple):
     cls_features: OptionalTensor
     attn_weights: OptionalListTensor
     hidden_states: OptionalListTensor
+    state_features: OptionalTensor = None
 
 
 class PointEncoder(nn.Module):
@@ -79,7 +80,8 @@ class PointEncoder(nn.Module):
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor, OptionalTensor]:
         if self.cls_token is not None:
-            return x[:, 1:], x[:, 0]
+            num_tokens = self.cls_token.shape[1]
+            return x[:, num_tokens:], x[:, 0]
         return x, None
 
     def transformer_encoder_forward(
@@ -89,6 +91,7 @@ class PointEncoder(nn.Module):
         token_centers: torch.Tensor | None = None,
         attn_bias_scale: float = 1.0,
         *,
+        state_tokens: torch.Tensor | None = None,
         self_mask: torch.Tensor | None = None,
         self_key_padding_mask: torch.Tensor | None = None,
         return_attention: bool = False,
@@ -96,15 +99,33 @@ class PointEncoder(nn.Module):
     ) -> PointEncoderOutput:
         B = x.shape[0]
 
-        if self.cls_token is not None:
-            cls_token = self.cls_token.expand(B, 1, -1)
+        num_state_tokens = 0
+        if state_tokens is not None:
+            cls_token = state_tokens
+            num_state_tokens = cls_token.shape[1]
             x = torch.cat((cls_token, x), dim=1)
 
             pos_enc = torch.cat((torch.zeros_like(cls_token), pos_enc), dim=1)
             if token_centers is not None:
                 cls_centers = torch.zeros(
                     B,
-                    1,
+                    num_state_tokens,
+                    token_centers.shape[-1],
+                    device=token_centers.device,
+                    dtype=token_centers.dtype,
+                )
+                token_centers = torch.cat((cls_centers, token_centers), dim=1)
+
+        elif self.cls_token is not None:
+            cls_token = self.cls_token.expand(B, -1, -1)
+            num_state_tokens = cls_token.shape[1]
+            x = torch.cat((cls_token, x), dim=1)
+
+            pos_enc = torch.cat((torch.zeros_like(cls_token), pos_enc), dim=1)
+            if token_centers is not None:
+                cls_centers = torch.zeros(
+                    B,
+                    num_state_tokens,
                     token_centers.shape[-1],
                     device=token_centers.device,
                     dtype=token_centers.dtype,
@@ -123,12 +144,14 @@ class PointEncoder(nn.Module):
         )
 
         patch_features, cls_features = self.split_tokens(out.x)
+        state_features = out.x[:, :num_state_tokens] if num_state_tokens > 0 else None
 
         return PointEncoderOutput(
             patch_features=patch_features,
             cls_features=cls_features,
             attn_weights=out.attn_weights,
             hidden_states=out.hidden_states,
+            state_features=state_features,
         )
 
     def forward(

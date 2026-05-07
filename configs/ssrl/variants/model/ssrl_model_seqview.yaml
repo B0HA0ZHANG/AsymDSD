@@ -1,0 +1,8 @@
+sequential_state_tokens: 1
+sequential_stop_grad: true
+sequential_view_weight:
+  class_path: asymdsd.components.LinearWarmupSchedule
+  init_args:
+    start_value: 0.0
+    final_value: 0.25
+    max_epochs: 20

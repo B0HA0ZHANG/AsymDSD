@@ -79,6 +79,7 @@ class DatasetConfig:
 class MultiPatchify:
     global_patchify: PatchifyModule
     local_patchify: PatchifyModule | None = None
+    sequential_patchify: PatchifyModule | None = None
 
 
 SampleArraysTransform = (
@@ -139,6 +140,9 @@ class UnsupervisedZarrPCDataModule(PointCloudDataModule):
         self.has_local_crops = (
             self.perform_multi_crop and self.multi_crop_cfg.local_cfg is not None  # type: ignore
         )
+        self.has_sequential_crops = (
+            self.perform_multi_crop and self.multi_crop_cfg.sequential_cfg is not None  # type: ignore
+        )
 
         if self.perform_patchify:
             if isinstance(patchify, PatchifyModule):
@@ -147,14 +151,23 @@ class UnsupervisedZarrPCDataModule(PointCloudDataModule):
                 self.patchify = MultiPatchify(
                     global_patchify=patchify.global_patchify,  # type: ignore
                     local_patchify=patchify.local_patchify,  # type: ignore
+                    sequential_patchify=patchify.sequential_patchify,  # type: ignore
                 )
             if self.has_local_crops and self.patchify.local_patchify is None:  # type: ignore
                 raise ValueError(
                     "Local patchify is required for multi crop with local crops."
                 )
+            if self.has_sequential_crops and self.patchify.sequential_patchify is None:  # type: ignore
+                self.patchify.sequential_patchify = self.patchify.local_patchify  # type: ignore
+            if self.has_sequential_crops and self.patchify.sequential_patchify is None:  # type: ignore
+                raise ValueError(
+                    "Sequential patchify is required for multi crop with sequential crops."
+                )
             self.patchify.global_patchify.set_seed(self.seed)  # type: ignore
             if self.has_local_crops:
                 self.patchify.local_patchify.set_seed(self.seed)  # type: ignore
+            if self.has_sequential_crops:
+                self.patchify.sequential_patchify.set_seed(self.seed)  # type: ignore
 
         if self.multi_crop_cfg is not None:
             self.multi_crop = PointMultiCrop(self.multi_crop_cfg, seed=self.seed)
@@ -165,6 +178,11 @@ class UnsupervisedZarrPCDataModule(PointCloudDataModule):
         max_num_points_local: int = (  # type: ignore
             self.multi_crop_cfg.local_cfg.num_points_range[1]  # type: ignore
             if self.has_local_crops
+            else None
+        )
+        max_num_points_sequential: int = (  # type: ignore
+            self.multi_crop_cfg.sequential_cfg.num_points_range[1]  # type: ignore
+            if self.has_sequential_crops
             else None
         )
 
@@ -185,6 +203,12 @@ class UnsupervisedZarrPCDataModule(PointCloudDataModule):
 
         self.pad_local = PadArrays(
             pad_to_length=max_num_points_local,
+            axis=0,
+            output_arr_len_key="num_points",
+        )
+
+        self.pad_sequential = PadArrays(
+            pad_to_length=max_num_points_sequential,
             axis=0,
             output_arr_len_key="num_points",
         )
@@ -290,6 +314,7 @@ class UnsupervisedZarrPCDataModule(PointCloudDataModule):
         x = self.multi_crop(points)
         global_crops = x["global_crops"]
         local_crops = x.get("local_crops")
+        sequential_crops = x.get("sequential_crops")
 
         for crop in global_crops:
             crop["points"] = self.augmentation_transform(crop["points"])
@@ -303,6 +328,12 @@ class UnsupervisedZarrPCDataModule(PointCloudDataModule):
                 if self.perform_patchify:
                     crop.update(self.patchify.local_patchify(crop["points"]))  # type: ignore
                 crop.update(self.pad_local({"points": crop["points"]}))
+
+        if self.has_sequential_crops:
+            for crop in sequential_crops:  # type: ignore
+                if self.perform_patchify:
+                    crop.update(self.patchify.sequential_patchify(crop["points"]))  # type: ignore
+                crop.update(self.pad_sequential({"points": crop["points"]}))
 
         return self._collate_crops(x)
 

@@ -26,18 +26,19 @@ class Tokens(NamedTuple):
 
 class TrainableToken(nn.Parameter):
     # Simply a wrapper around nn.Parameter
-    def __new__(cls, embed_dim: int = 384) -> Self:
-        return super().__new__(cls, torch.empty((1, 1, embed_dim)))  # type: ignore
+    def __new__(cls, embed_dim: int = 384, num_tokens: int = 1) -> Self:
+        return super().__new__(cls, torch.empty((1, num_tokens, embed_dim)))  # type: ignore
 
-    def __init__(self, embed_dim: int = 384) -> None:
+    def __init__(self, embed_dim: int = 384, num_tokens: int = 1) -> None:
         super().__init__()
         self.embed_dim = embed_dim
+        self.num_tokens = num_tokens
 
     def __deepcopy__(self, memo):
         if id(self) in memo:
             return memo[id(self)]
         else:
-            result = type(self)(self.embed_dim)
+            result = type(self)(self.embed_dim, self.num_tokens)
             result.data = self.data.clone(memory_format=torch.preserve_format)
             memo[id(self)] = result
             return result
