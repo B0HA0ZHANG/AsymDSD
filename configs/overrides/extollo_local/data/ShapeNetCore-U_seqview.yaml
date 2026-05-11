@@ -10,9 +10,9 @@ init_args:
         num_pre_sample_points: 16384
     num_workers_create_ds: 24
 
-  batch_size: 32
+  batch_size: 64
   max_num_points: 1024
-  num_workers_train: 4
+  num_workers_train: 12
   num_workers_val_test: 0
   pin_memory: true
 

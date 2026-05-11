@@ -1,0 +1,22 @@
+max_epochs: 300
+check_val_every_n_epoch: 1
+num_sanity_val_steps: 0
+
+precision: 16-mixed
+accumulate_grad_batches: 2
+deterministic: true
+gradient_clip_val: 10.0
+log_every_n_steps: 50
+
+logger: ../extollo/ssrl_wandb.yaml
+
+callbacks:
+  - class_path: asymdsd.callbacks.CrossEntropyDecompositionLogger
+  - class_path: asymdsd.callbacks.DefaultTrainerCheckpoint
+    init_args:
+      dirpath: /Volumes/westeurope_extollo_rd_eu_rd_k_data_analytics_adbv/rd_k_warehouse/rd_k_katalog/log_2/checkpoints
+      save_last: true
+      save_top_k: 1
+      monitor: train/loss
+      mode: min
+      every_n_epochs: 5
