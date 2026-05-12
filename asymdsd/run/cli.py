@@ -29,6 +29,7 @@ def register_checkpoint_safe_globals() -> None:
         ClassificationHeadType as LayerClassificationHeadType,
     )
     from asymdsd.layers.masked_center_predictor import MaskedCenterPredictorConfig
+    from asymdsd.layers.semantic_slots import SemanticSlotConfig
     from asymdsd.models.asymdsd import ClsPredictor, TraingingMode
     from asymdsd.models.neural_classifier import (
         ClassificationHeadType as NeuralClassificationHeadType,
@@ -46,6 +47,7 @@ def register_checkpoint_safe_globals() -> None:
             PCFieldKey,
             LayerClassificationHeadType,
             MaskedCenterPredictorConfig,
+            SemanticSlotConfig,
             NeuralClassificationHeadType,
             SemanticClassificationHeadType,
             TraingingMode,

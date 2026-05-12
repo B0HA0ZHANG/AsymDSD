@@ -1,0 +1,36 @@
+max_epochs: 300
+check_val_every_n_epoch: 1
+num_sanity_val_steps: 0
+
+accelerator: gpu
+devices: 1
+precision: 16-mixed
+accumulate_grad_batches: 4
+deterministic: true
+gradient_clip_val: 10.0
+log_every_n_steps: 50
+
+logger:
+  class_path: asymdsd.loggers.WandbLogger
+  init_args:
+    project: AsymDSD
+    save_dir: logs
+    anonymous: true
+    log_model: false
+    offline: false
+    job_type: SSRL
+    resume: allow
+    name: Pretrain_slot_asymdsd_local
+    notes:
+    id:
+
+callbacks:
+  - class_path: asymdsd.callbacks.CrossEntropyDecompositionLogger
+  - class_path: asymdsd.callbacks.DefaultTrainerCheckpoint
+    init_args:
+      dirpath: checkpoints/slot_asymdsd
+      save_last: true
+      save_top_k: 1
+      monitor: train/loss
+      mode: min
+      every_n_epochs: 5

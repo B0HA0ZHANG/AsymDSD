@@ -266,6 +266,17 @@ add_unmasked_global_cls: true
 #   (type: bool, default: False)
 patch_instance_norm: false
 
+# Slot-AsymDSD semantic bottleneck. Leave null/zero for the baseline.
+semantic_slot_config:
+slot_loss_weight:
+slot_diversity_weight:
+slot_proto_loss_weight:
+slot_teacher_temp: 0.05
+slot_student_temp: 0.1
+slot_centering_momentum:
+slot_num_prototypes: 1024
+slot_loss_beta: 0.5
+
 #   (type: bool, default: False)
 disable_projection: false
 

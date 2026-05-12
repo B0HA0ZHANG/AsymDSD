@@ -1,0 +1,32 @@
+semantic_slot_config:
+  class_path: asymdsd.layers.SemanticSlotConfig
+  init_args:
+    num_slots: 16
+    num_heads: 6
+    num_layers: 2
+    hidden_ratio: 4.0
+    norm_layer: asymdsd.layers.RMSNorm
+    act_layer: torch.nn.GELU
+    dropout_p: 0.0
+    drop_path_p: 0.0
+    uniform_drop_path: false
+    efficient_drop_path: true
+    add_pos_enc_every_layer: false
+    bias: false
+    allow_grad_ckpt: false
+    self_attention: true
+
+slot_loss_weight:
+  class_path: asymdsd.components.LinearWarmupSchedule
+  init_args:
+    start_value: 0.0
+    final_value: 0.25
+    max_epochs: 20
+
+slot_diversity_weight: 0.02
+slot_proto_loss_weight: 0.0
+slot_teacher_temp: 0.05
+slot_student_temp: 0.1
+slot_centering_momentum: 0.9
+slot_num_prototypes: 1024
+slot_loss_beta: 0.5

@@ -22,6 +22,13 @@ from .point_upsampling import PointUpsampling
 from .projection_head import ProjectionHead, ProjectionHeadConfig, ProjectionOutput
 from .projection_wrapper import ProjectionWrapper
 from .relative_3d_bias import Relative3DBias, Relative3DBiasConfig
+from .semantic_slots import (
+    SemanticSlotBottleneck,
+    SemanticSlotConfig,
+    SemanticSlotOutput,
+    SemanticSlotPredictor,
+    semantic_slot_diversity_loss,
+)
 from .tokenization import (
     MemEfficientPointMaxEmbedding,
     MemEfficientPointMaxEmbeddingConfig,
@@ -79,6 +86,10 @@ __all__ = [
     "Relative3DBias",
     "Relative3DBiasConfig",
     "RMSNorm",
+    "SemanticSlotBottleneck",
+    "SemanticSlotConfig",
+    "SemanticSlotOutput",
+    "SemanticSlotPredictor",
     "SwiGLU",
     "ToMultiPatches",
     "TransformerDecoder",
@@ -89,4 +100,5 @@ __all__ = [
     "TransposeBatchNorm1d",
     "VarMemEfficientPointMaxEmbedding",
     "VarMemEfficientPointMaxEmbeddingConfig",
+    "semantic_slot_diversity_loss",
 ]

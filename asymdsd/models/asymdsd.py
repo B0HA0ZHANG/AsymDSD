@@ -3,11 +3,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from asymdsd.data import PointCloudDataModule
 
+import copy
 from enum import StrEnum, auto
 from functools import partial
 
 import lightning as L
 import torch
+import torch.nn.functional as F
 from lightning.pytorch.utilities.types import LRSchedulerTypeUnion
 from torch import nn
 from torch.utils.checkpoint import checkpoint
@@ -120,6 +122,15 @@ class AsymDSD(L.LightningModule):
         | None = None,
         relation_distill_weight: FloatMayCall | None = None,
         relation_distill_on_encoder: bool = False,
+        semantic_slot_config: SemanticSlotConfig | None = None,
+        slot_loss_weight: FloatMayCall | None = None,
+        slot_diversity_weight: FloatMayCall | None = None,
+        slot_proto_loss_weight: FloatMayCall | None = None,
+        slot_teacher_temp: FloatMayCall = 0.05,
+        slot_student_temp: FloatMayCall = 0.1,
+        slot_centering_momentum: FloatMayCall | None = None,
+        slot_num_prototypes: int = 1024,
+        slot_loss_beta: float = 0.5,
         masked_center_predictor_config: MaskedCenterPredictorConfig | None = None,
         center_prediction_loss_weight: FloatMayCall | None = None,
         center_prediction_loss_beta: float | None = 0.25,
@@ -153,6 +164,8 @@ class AsymDSD(L.LightningModule):
         self.sequential_stop_grad = sequential_stop_grad
         self.patch_supervision_layer = patch_supervision_layer
         self.patch_supervision_use_encoder_norm = patch_supervision_use_encoder_norm
+        self.do_semantic_slots = semantic_slot_config is not None
+        self.n_slot_prototypes = slot_num_prototypes
 
         if patch_supervision_layer is not None:
             num_layers = encoder_config.num_layers
@@ -163,6 +176,10 @@ class AsymDSD(L.LightningModule):
                 )
 
         self.mode = training_mode
+        if self.do_semantic_slots and not self.mode.do_mask:
+            raise ValueError(
+                "semantic_slot_config is only supported when masked training is enabled."
+            )
 
         self.norm_transform = norm_transform or IdentityMultiArg()
         self.aug_transform: nn.Module = (
@@ -304,6 +321,35 @@ class AsymDSD(L.LightningModule):
                     project_kwargs=["memory"] if self.decoder_style_predictor else None,
                 )
 
+        if self.do_semantic_slots:
+            semantic_slot_config = copy.deepcopy(semantic_slot_config)
+            semantic_slot_config.embed_dim = self.embed_dim  # type: ignore[union-attr]
+            self.student["semantic_slots"] = (  # type: ignore[union-attr]
+                semantic_slot_config.instantiate()
+            )
+            self.teacher["semantic_slots"] = (  # type: ignore[union-attr]
+                semantic_slot_config.instantiate()
+            )
+            self.student["slot_predictor"] = SemanticSlotPredictor(
+                self.embed_dim,
+                norm_layer=semantic_slot_config.norm_layer,  # type: ignore[union-attr]
+                act_layer=semantic_slot_config.act_layer,  # type: ignore[union-attr]
+                bias=semantic_slot_config.bias,  # type: ignore[union-attr]
+            )
+
+            slot_projection_head_config = copy.deepcopy(projection_head_config)
+            slot_projection_head_config.out_dim = slot_num_prototypes
+            slot_projection_head = partial(
+                ProjectionHead, **vars(slot_projection_head_config)
+            )
+            self.student["slot_projection_head"] = slot_projection_head()
+            self.teacher["slot_projection_head"] = slot_projection_head()
+            self.teacher["slot_centering"] = (
+                Centering(slot_num_prototypes)
+                if slot_centering_momentum is not None
+                else IdentityMultiArg()
+            )
+
         if self.mode.do_cls:
             # Additional modules for global CLS
             if shared_projection_head:
@@ -329,11 +375,15 @@ class AsymDSD(L.LightningModule):
             self.student["point_encoder"].enable_gradient_checkpointing()
             if self.mode.do_mask and self.do_predict:
                 student_predictor.enable_gradient_checkpointing()
+            if self.do_semantic_slots:
+                self.student["semantic_slots"].enable_gradient_checkpointing()
             if self.do_masked_center_prediction:
                 self.student["masked_center_predictor"].enable_gradient_checkpointing()
 
         self.patch_loss = PatchLoss()  # TODO: Update
         self.cls_loss = ClsLoss()
+        self.slot_proto_loss = PatchLoss()
+        self.slot_regression_loss = nn.SmoothL1Loss(beta=slot_loss_beta)
         self.local_relation_loss = (
             relation_distill_loss.instantiate()
             if relation_distill_loss is not None
@@ -402,6 +452,12 @@ class AsymDSD(L.LightningModule):
             "relation_distill_weight": relation_distill_weight or 0.0,
             "center_prediction_loss_weight": center_prediction_loss_weight or 0.0,
             "hard_region_weight": hard_region_weight or 0.0,
+            "slot_loss_weight": slot_loss_weight or 0.0,
+            "slot_diversity_weight": slot_diversity_weight or 0.0,
+            "slot_proto_loss_weight": slot_proto_loss_weight or 0.0,
+            "slot_teacher_temp": slot_teacher_temp,
+            "slot_student_temp": slot_student_temp,
+            "slot_centering_momentum": slot_centering_momentum,
         }
 
         self.modules_ckpt_path = modules_ckpt_path
@@ -575,6 +631,28 @@ class AsymDSD(L.LightningModule):
         weights = torch.where(hard_mask, weights, torch.ones_like(weights))
         return weights.detach()
 
+    def _compute_slot_regression_loss(
+        self,
+        student_slots: torch.Tensor,
+        teacher_slots: torch.Tensor,
+    ) -> torch.Tensor:
+        student_slots = F.normalize(student_slots, dim=-1, eps=1e-6)
+        teacher_slots = F.normalize(teacher_slots.detach(), dim=-1, eps=1e-6)
+        return self.slot_regression_loss(student_slots, teacher_slots)
+
+    def _compute_slot_assignment_stats(
+        self,
+        slot_logits: torch.Tensor,
+        temp: float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        probs = torch.softmax(slot_logits / temp, dim=-1)
+        avg_probs = probs.mean(dim=(0, 1)).clamp_min(1e-8)
+        entropy = -(avg_probs * avg_probs.log()).sum()
+        log_dim = avg_probs.new_tensor(float(avg_probs.numel())).log()
+        normalized_entropy = entropy / log_dim.clamp_min(1e-8)
+        usage = torch.exp(entropy)
+        return normalized_entropy, usage
+
     def _use_intermediate_patch_supervision(self) -> bool:
         return self.mode.do_mask and self.patch_supervision_layer is not None
 
@@ -629,6 +707,8 @@ class AsymDSD(L.LightningModule):
             "x_patch_logits": None,
             "x_patch_embedding": None,
             "x_patch_visible_embedding": None,
+            "x_slot_embedding": None,
+            "x_slot_logits": None,
         }
 
         # x is normalized
@@ -661,6 +741,22 @@ class AsymDSD(L.LightningModule):
         # ------- Masked Point Modeling (MPM) -------
         if self.mode.do_mask and mask is not None:
             x_patch = x_patch[indices_masked_crops]
+
+            if self.do_semantic_slots:
+                slot_patch_tokens = self._multi_mask_repeat(x_patch)
+                if block_idx is not None:
+                    slot_patch_tokens = slot_patch_tokens.repeat_interleave(
+                        block_idx.size(1), dim=0
+                    )
+                slot_embeddings = self.teacher.semantic_slots(slot_patch_tokens).x
+                out_dict["x_slot_embedding"] = slot_embeddings
+                slot_logits: torch.Tensor = self.teacher.slot_projection_head(
+                    slot_embeddings
+                )[0]
+                centering_momentum = self.scheduler.value["slot_centering_momentum"]
+                out_dict["x_slot_logits"] = self.teacher.slot_centering(
+                    slot_logits, momentum=centering_momentum
+                )
 
             if return_embeddings and self.relation_distill_on_encoder:
                 x_patch_visible = gather_masked(self._multi_mask_repeat(x_patch), ~mask)
@@ -737,6 +833,9 @@ class AsymDSD(L.LightningModule):
             "x_patch_embedding": None,
             "x_patch_visible_embedding": None,
             "x_patch_proj_norm": None,
+            "x_slot_embedding": None,
+            "x_slot_pred": None,
+            "x_slot_logits": None,
             "classification_logits": None,
             "classification_logits_masked": None,
             "masked_center_preds": None,
@@ -1039,7 +1138,20 @@ class AsymDSD(L.LightningModule):
                 pe_out,
                 self._get_patch_supervision_norm(self.student),
             )
+            x_patch_context = x_patch_all[:, :num_vis]
             x_patch = x_patch_all[:, -num_masks:]
+
+        if self.do_semantic_slots:
+            slot_visible = x_patch_context
+            if multi_block:
+                slot_visible = slot_visible.repeat_interleave(num_blocks, dim=0)
+            slot_tokens = torch.cat((slot_visible, x_patch), dim=1)
+            slot_embeddings = self.student.semantic_slots(slot_tokens).x
+            out_dict["x_slot_embedding"] = slot_embeddings
+            out_dict["x_slot_pred"] = self.student.slot_predictor(slot_embeddings)
+            out_dict["x_slot_logits"] = self.student.slot_projection_head(
+                slot_embeddings
+            )[0]
 
         # --- CLS embeddings and logits ---
         if self.mode.do_cls:
@@ -1234,6 +1346,8 @@ class AsymDSD(L.LightningModule):
         cls_loss = patch_loss = koleo_loss = classification_loss = me_max = None
         sequential_cls_loss = None
         center_prediction_loss = None
+        slot_loss = slot_diversity_loss = slot_proto_loss = None
+        slot_entropy = slot_usage = None
         relation_loss = 0.0 if self.local_relation_loss is not None else None
         relation_pos_loss = relation_margin_loss = None
         relation_teacher_margin = relation_student_margin = None
@@ -1368,6 +1482,49 @@ class AsymDSD(L.LightningModule):
                 )
                 loss = loss + self.regression_loss_weight * regression_loss
                 total_terms += self.regression_loss_weight
+
+            if (
+                self.do_semantic_slots
+                and preds["x_slot_pred"] is not None
+                and targets["x_slot_embedding"] is not None
+            ):
+                slot_loss = self._compute_slot_regression_loss(
+                    preds["x_slot_pred"],  # type: ignore[arg-type]
+                    targets["x_slot_embedding"],  # type: ignore[arg-type]
+                )
+                slot_weight = self.scheduler.value["slot_loss_weight"]
+                if slot_weight > 0.0:
+                    loss = loss + slot_weight * slot_loss
+                    total_terms += slot_weight
+
+                slot_diversity_loss = semantic_slot_diversity_loss(
+                    preds["x_slot_embedding"]  # type: ignore[arg-type]
+                )
+                diversity_weight = self.scheduler.value["slot_diversity_weight"]
+                if diversity_weight > 0.0:
+                    loss = loss + diversity_weight * slot_diversity_loss
+                    total_terms += diversity_weight
+
+                if preds["x_slot_logits"] is not None:
+                    slot_entropy, slot_usage = self._compute_slot_assignment_stats(
+                        preds["x_slot_logits"],  # type: ignore[arg-type]
+                        self.scheduler.value["slot_student_temp"],
+                    )
+
+                if (
+                    preds["x_slot_logits"] is not None
+                    and targets["x_slot_logits"] is not None
+                ):
+                    slot_proto_loss = self.slot_proto_loss(
+                        preds["x_slot_logits"],  # type: ignore[arg-type]
+                        targets["x_slot_logits"],  # type: ignore[arg-type]
+                        self.scheduler.value["slot_teacher_temp"],
+                        self.scheduler.value["slot_student_temp"],
+                    )
+                    slot_proto_weight = self.scheduler.value["slot_proto_loss_weight"]
+                    if slot_proto_weight > 0.0:
+                        loss = loss + slot_proto_weight * slot_proto_loss
+                        total_terms += slot_proto_weight
 
         # (B*C, n_prototypes)
         cls_targets: torch.Tensor = targets["x_cls_logits"]  # type: ignore
@@ -1656,6 +1813,11 @@ class AsymDSD(L.LightningModule):
             "cls_targets": cls_targets,
             "patch_loss": patch_loss,
             "center_prediction_loss": center_prediction_loss,
+            "slot_loss": slot_loss,
+            "slot_diversity_loss": slot_diversity_loss,
+            "slot_proto_loss": slot_proto_loss,
+            "slot_entropy": slot_entropy,
+            "slot_usage": slot_usage,
             "relation_loss": relation_loss,
             "relation_pos_loss": relation_pos_loss,
             "relation_margin_loss": relation_margin_loss,
@@ -1696,6 +1858,17 @@ class AsymDSD(L.LightningModule):
             and self.scheduler.value.get("sequential_view_weight", 0.0) > 0.0,
             "train/patch_loss": self.mode.do_mask and not self.disable_projection,
             "train/center_prediction_loss": self.do_masked_center_prediction,
+            "train/slot_loss": self.do_semantic_slots
+            and self.mode.do_mask
+            and self.scheduler.value.get("slot_loss_weight", 0.0) > 0.0,
+            "train/slot_diversity_loss": self.do_semantic_slots
+            and self.mode.do_mask
+            and self.scheduler.value.get("slot_diversity_weight", 0.0) > 0.0,
+            "train/slot_proto_loss": self.do_semantic_slots
+            and self.mode.do_mask
+            and self.scheduler.value.get("slot_proto_loss_weight", 0.0) > 0.0,
+            "train/slot_entropy": self.do_semantic_slots and self.mode.do_mask,
+            "train/slot_usage": self.do_semantic_slots and self.mode.do_mask,
             "train/relation_loss": self.local_relation_loss is not None
             and self.mode.do_mask,
             "train/relation_pos_loss": self.local_relation_loss is not None
@@ -1726,6 +1899,7 @@ class AsymDSD(L.LightningModule):
                         "train/cls_loss",
                         "train/sequential_cls_loss",
                         "train/patch_loss",
+                        "train/slot_loss",
                         "train/regression_loss",
                     ],
                 )
