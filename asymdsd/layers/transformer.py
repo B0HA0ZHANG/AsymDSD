@@ -33,6 +33,9 @@ class TransformerBaseConfig(FactoryConfig, ABC):
     bias: bool = True
     allow_grad_ckpt: bool = False
     relative_3d_bias: Relative3DBiasConfig | None = None
+    relative_3d_bias_layer_scales: list[float] | None = None
+    relative_3d_bias_learnable_layer_scale: bool = False
+    relative_3d_bias_layer_scale_max: float = 1.5
 
 
 @dataclass
@@ -149,7 +152,7 @@ class Attention(nn.Module):
         memory: torch.Tensor | None = None,
         q_centers: torch.Tensor | None = None,
         memory_centers: torch.Tensor | None = None,
-        attn_bias_scale: float = 1.0,
+        attn_bias_scale: float | torch.Tensor = 1.0,
         *,
         attn_mask: torch.Tensor | None = None,
         key_padding_mask: torch.Tensor | None = None,
@@ -173,11 +176,15 @@ class Attention(nn.Module):
                 k_centers = memory_centers
 
         merged_attn_mask = attn_mask
+        scale_is_active = True
+        if not isinstance(attn_bias_scale, torch.Tensor):
+            scale_is_active = attn_bias_scale > 0.0
+
         if (
             self.relative_3d_bias is not None
             and q_centers is not None
             and k_centers is not None
-            and attn_bias_scale > 0.0
+            and scale_is_active
         ):
             rel_bias = self.relative_3d_bias(q_centers, k_centers)
             rel_bias = (rel_bias * attn_bias_scale).flatten(0, 1)
@@ -237,7 +244,7 @@ class Block(nn.Module):
         memory: torch.Tensor | None = None,
         token_centers: torch.Tensor | None = None,
         memory_centers: torch.Tensor | None = None,
-        attn_bias_scale: float = 1.0,
+        attn_bias_scale: float | torch.Tensor = 1.0,
         *,
         self_mask: torch.Tensor | None = None,
         memory_mask: torch.Tensor | None = None,
@@ -367,7 +374,59 @@ class TransformerModule(nn.Module):
 
         self.norm = config.norm_layer(config.embed_dim)
 
+        self.relative_3d_bias_layer_scale_logits = None
+        self.relative_3d_bias_layer_scale_max = config.relative_3d_bias_layer_scale_max
+        layer_scales = config.relative_3d_bias_layer_scales
+        if layer_scales is None and config.relative_3d_bias_learnable_layer_scale:
+            layer_scales = [1.0] * config.num_layers
+
+        if layer_scales is not None:
+            if len(layer_scales) != config.num_layers:
+                raise ValueError(
+                    "relative_3d_bias_layer_scales must have length "
+                    f"{config.num_layers}, got {len(layer_scales)}."
+                )
+
+            layer_scales_tensor = torch.tensor(layer_scales, dtype=torch.float32)
+            if torch.any(layer_scales_tensor < 0.0):
+                raise ValueError("relative_3d_bias_layer_scales must be non-negative.")
+
+            if config.relative_3d_bias_learnable_layer_scale:
+                if self.relative_3d_bias_layer_scale_max <= 0.0:
+                    raise ValueError("relative_3d_bias_layer_scale_max must be > 0.")
+                eps = 1e-4
+                normalized_scales = (
+                    layer_scales_tensor / self.relative_3d_bias_layer_scale_max
+                ).clamp(eps, 1.0 - eps)
+                self.relative_3d_bias_layer_scale_logits = nn.Parameter(
+                    torch.logit(normalized_scales)
+                )
+            else:
+                self.register_buffer(
+                    "relative_3d_bias_layer_scales", layer_scales_tensor
+                )
+
         self._gradient_checkpointing = False
+
+    def _get_relative_3d_bias_scale(
+        self,
+        attn_bias_scale: float | torch.Tensor,
+        layer_i: int,
+    ) -> float | torch.Tensor:
+        if not isinstance(attn_bias_scale, torch.Tensor) and attn_bias_scale <= 0.0:
+            return attn_bias_scale
+
+        if self.relative_3d_bias_layer_scale_logits is not None:
+            layer_scale = self.relative_3d_bias_layer_scale_max * torch.sigmoid(
+                self.relative_3d_bias_layer_scale_logits[layer_i]
+            )
+            return attn_bias_scale * layer_scale
+
+        layer_scales = getattr(self, "relative_3d_bias_layer_scales", None)
+        if layer_scales is not None:
+            return attn_bias_scale * layer_scales[layer_i]
+
+        return attn_bias_scale
 
     def forward(
         self,
@@ -376,7 +435,7 @@ class TransformerModule(nn.Module):
         memory: torch.Tensor | None = None,
         token_centers: torch.Tensor | None = None,
         memory_centers: torch.Tensor | None = None,
-        attn_bias_scale: float = 1.0,
+        attn_bias_scale: float | torch.Tensor = 1.0,
         *,
         self_mask: torch.Tensor | None = None,
         memory_mask: torch.Tensor | None = None,
@@ -391,9 +450,14 @@ class TransformerModule(nn.Module):
         attn_weights = [] if return_attention else None
         hidden_states = [] if return_hidden_states else None
 
-        for block in self.stack:
+        for layer_i, block in enumerate(self.stack):
             if self.add_pos_enc:
                 x = x + pos_enc
+
+            layer_attn_bias_scale = self._get_relative_3d_bias_scale(
+                attn_bias_scale,
+                layer_i,
+            )
 
             if self._gradient_checkpointing:
                 # Do not use lambda on variables for ckpt func
@@ -403,7 +467,7 @@ class TransformerModule(nn.Module):
                     memory,
                     token_centers=token_centers,
                     memory_centers=memory_centers,
-                    attn_bias_scale=attn_bias_scale,
+                    attn_bias_scale=layer_attn_bias_scale,
                     self_mask=self_mask,
                     memory_mask=memory_mask,
                     self_key_padding_mask=self_key_padding_mask,
@@ -417,7 +481,7 @@ class TransformerModule(nn.Module):
                     memory,
                     token_centers=token_centers,
                     memory_centers=memory_centers,
-                    attn_bias_scale=attn_bias_scale,
+                    attn_bias_scale=layer_attn_bias_scale,
                     self_mask=self_mask,
                     memory_mask=memory_mask,
                     self_key_padding_mask=self_key_padding_mask,
@@ -456,7 +520,7 @@ class TransformerEncoder(TransformerModule):
         x: torch.Tensor,
         pos_enc: torch.Tensor,
         token_centers: torch.Tensor | None = None,
-        attn_bias_scale: float = 1.0,
+        attn_bias_scale: float | torch.Tensor = 1.0,
         *,
         self_mask: torch.Tensor | None = None,
         self_key_padding_mask: torch.Tensor | None = None,

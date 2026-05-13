@@ -11,6 +11,9 @@ class Relative3DBiasConfig(FactoryConfig):
     num_heads: int | None = None
     hidden_dim: int = 64
     use_distance: bool = True
+    rbf_num_bins: int = 0
+    rbf_max_distance: float = 2.0
+    bias_bound: float | None = None
 
     @property
     def CLS(self):
@@ -24,6 +27,9 @@ class Relative3DBiasConfig(FactoryConfig):
             num_heads=self.num_heads,
             hidden_dim=self.hidden_dim,
             use_distance=self.use_distance,
+            rbf_num_bins=self.rbf_num_bins,
+            rbf_max_distance=self.rbf_max_distance,
+            bias_bound=self.bias_bound,
         )
 
 
@@ -33,12 +39,40 @@ class Relative3DBias(nn.Module):
         num_heads: int,
         hidden_dim: int = 64,
         use_distance: bool = True,
+        rbf_num_bins: int = 0,
+        rbf_max_distance: float = 2.0,
+        bias_bound: float | None = None,
     ) -> None:
         super().__init__()
+        if rbf_num_bins < 0:
+            raise ValueError(f"rbf_num_bins must be >= 0, got {rbf_num_bins}.")
+        if rbf_num_bins > 0 and rbf_max_distance <= 0.0:
+            raise ValueError(
+                "rbf_max_distance must be > 0 when using RBF bins, "
+                f"got {rbf_max_distance}."
+            )
+        if bias_bound is not None and bias_bound <= 0.0:
+            raise ValueError(f"bias_bound must be > 0, got {bias_bound}.")
+
         self.num_heads = num_heads
         self.use_distance = use_distance
+        self.rbf_num_bins = rbf_num_bins
+        self.bias_bound = bias_bound
 
-        in_dim = 4 if use_distance else 3
+        if rbf_num_bins > 0:
+            centers = torch.linspace(0.0, rbf_max_distance, rbf_num_bins)
+            width = (
+                rbf_max_distance
+                if rbf_num_bins == 1
+                else rbf_max_distance / (rbf_num_bins - 1)
+            )
+            self.register_buffer("rbf_centers", centers)
+            self.register_buffer("rbf_gamma", torch.tensor(1.0 / (width * width)))
+
+        in_dim = 3
+        if use_distance:
+            in_dim += 1
+        in_dim += rbf_num_bins
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, hidden_dim, bias=True),
             nn.GELU(),
@@ -51,11 +85,18 @@ class Relative3DBias(nn.Module):
         k_centers: torch.Tensor,
     ) -> torch.Tensor:
         rel = q_centers.unsqueeze(2) - k_centers.unsqueeze(1)
-        feats = rel
+        feats = [rel]
 
-        if self.use_distance:
+        if self.use_distance or self.rbf_num_bins > 0:
             dist = torch.linalg.vector_norm(rel, dim=-1, keepdim=True)
-            feats = torch.cat((rel, dist), dim=-1)
+            if self.use_distance:
+                feats.append(dist)
+            if self.rbf_num_bins > 0:
+                centers = self.rbf_centers.to(dtype=dist.dtype)
+                gamma = self.rbf_gamma.to(dtype=dist.dtype)
+                feats.append(torch.exp(-gamma * (dist - centers).square()))
 
-        bias = self.mlp(feats)
+        bias = self.mlp(torch.cat(feats, dim=-1))
+        if self.bias_bound is not None:
+            bias = self.bias_bound * torch.tanh(bias / self.bias_bound)
         return bias.permute(0, 3, 1, 2).contiguous()

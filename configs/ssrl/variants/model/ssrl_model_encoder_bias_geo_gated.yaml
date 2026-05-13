@@ -1,0 +1,32 @@
+encoder_config:
+  relative_3d_bias:
+    class_path: asymdsd.layers.Relative3DBiasConfig
+    init_args:
+      num_heads: 6
+      hidden_dim: 64
+      use_distance: true
+      rbf_num_bins: 8
+      rbf_max_distance: 2.0
+      bias_bound: 2.0
+  relative_3d_bias_layer_scales:
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    - 0.6
+    - 0.6
+    - 0.6
+    - 0.6
+    - 0.25
+    - 0.25
+    - 0.25
+    - 0.25
+  relative_3d_bias_learnable_layer_scale: true
+  relative_3d_bias_layer_scale_max: 1.5
+
+relative_3d_bias_scale: 1.0
+
+hard_region_weight: 0.0
+regression_loss_weight: 0.0
+relation_distill_weight: 0.0
+center_prediction_loss_weight: 0.0
